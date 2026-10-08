@@ -1,0 +1,11 @@
+{
+  "name": "hkai-jidoutouei",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "frontend:install": "npm --prefix frontend install",
+    "frontend:dev": "npm --prefix frontend run dev",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:test": "npm --prefix frontend run test"
+  }
+}

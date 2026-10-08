@@ -1,0 +1,287 @@
+:root {
+  --bg-main: #e8eef3;
+  --bg-panel: #f8fbfd;
+  --ink: #15303a;
+  --ink-soft: #2b4f5c;
+  --accent: #d5532f;
+  --accent-2: #1f86b5;
+  --line: #bed0da;
+  --warn: #cb5d00;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 20% 20%, #f4f8fb 0%, transparent 36%),
+    radial-gradient(circle at 80% 80%, #dbe8ef 0%, transparent 40%),
+    linear-gradient(145deg, #e3ebf1 0%, #ecf3f7 50%, #dee8ef 100%);
+}
+
+.app-root {
+  display: grid;
+  grid-template-rows: 68px 1fr;
+  height: 100%;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: #ffffffcc;
+  backdrop-filter: blur(6px);
+}
+
+.brand {
+  font-family: "Rajdhani", sans-serif;
+  font-size: 28px;
+  font-weight: 700;
+  margin-right: 8px;
+  letter-spacing: 0.6px;
+}
+
+.action-btn,
+button,
+select,
+input {
+  font-family: inherit;
+}
+
+.action-btn,
+button {
+  border: 1px solid #8ca4b3;
+  background: #fff;
+  border-radius: 8px;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.action-btn:hover,
+button:hover {
+  border-color: var(--accent-2);
+}
+
+.action-btn input[type="file"] {
+  display: none;
+}
+
+.status-chip {
+  margin-left: auto;
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid #9eb5c3;
+  background: #f6fbff;
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layout-grid {
+  display: grid;
+  grid-template-columns: 25% 75%;
+  gap: 10px;
+  padding: 10px;
+  min-height: 0;
+}
+
+.left-pane,
+.right-pane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--bg-panel);
+  padding: 10px;
+  box-shadow: 0 8px 16px #7a9ab11a;
+}
+
+.panel-title {
+  font-family: "Rajdhani", sans-serif;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.camera-panel {
+  flex: 1;
+  min-height: 360px;
+}
+
+.camera-meta {
+  margin: 6px 0;
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.camera-canvas {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid #a8bbc7;
+  border-radius: 8px;
+  width: 100%;
+  height: 320px;
+  background: #141a1d;
+}
+
+.camera-image,
+.mask-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transform-origin: center center;
+  user-select: none;
+  pointer-events: none;
+}
+
+.mask-overlay {
+  opacity: 0.38;
+  mix-blend-mode: multiply;
+}
+
+.prompt-point {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+  border: 1px solid #fff;
+}
+
+.prompt-point.positive {
+  background: #1db25f;
+}
+
+.prompt-point.negative {
+  background: #c42d2d;
+}
+
+.test-upload {
+  display: block;
+  margin-top: 10px;
+  font-size: 13px;
+}
+
+.test-upload input {
+  display: block;
+  margin-top: 4px;
+}
+
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.mini-mask-preview {
+  width: 100%;
+  border: 1px solid #9bb0be;
+  border-radius: 6px;
+  margin-top: 8px;
+}
+
+.sample-list {
+  margin-top: 8px;
+  max-height: 180px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.sample-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.sample-item.active {
+  outline: 2px solid #86b7ce;
+  border-radius: 8px;
+  padding: 2px;
+}
+
+.sample-label {
+  text-align: left;
+}
+
+.pdf-panel {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 8px;
+}
+
+.page-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.pdf-viewport {
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #a2b4c0;
+  border-radius: 8px;
+  background: #d5e2ea;
+  position: relative;
+}
+
+.pdf-layer-stack {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.overlay-stage-wrap {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+.hint {
+  margin-top: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+}
+
+.error-text {
+  color: #a52828;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+@media (max-width: 1200px) {
+  .layout-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -1,0 +1,15 @@
+fastapi==0.116.1
+uvicorn[standard]==0.35.0
+python-multipart==0.0.20
+opencv-python==4.12.0.88
+ezdxf==1.4.3
+numpy==2.2.6
+pydantic==2.11.7
+pydantic-settings==2.10.1
+# Use a CUDA build that supports Blackwell/RTX 50 series on your machine.
+# Example (verify on your driver/toolkit):
+# pip install --index-url https://download.pytorch.org/whl/cu128 torch torchvision torchaudio
+torch==2.9.0
+segment-anything @ git+https://github.com/facebookresearch/segment-anything.git
+pytest==8.4.1
+httpx==0.28.1
