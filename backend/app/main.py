@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import camera, health, project, sam
+from app.state import camera_service
 
 app = FastAPI(title="HKAI_JidouTouei API", version="0.1.0")
 
@@ -23,3 +24,8 @@ app.include_router(project.router)
 @app.get("/")
 def root() -> dict[str, object]:
     return {"name": "HKAI_JidouTouei", "ok": True}
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    camera_service.shutdown()

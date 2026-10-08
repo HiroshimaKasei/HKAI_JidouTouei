@@ -3,13 +3,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptMask,
   capture,
+  fetchFileAsFile,
+  fileToHex,
   getCameraStatus,
   getHealth,
   listProjects,
   loadProject,
-  registerCaptureImage,
   prepareEmbedding,
   predictMask,
+  registerCaptureFile,
   resolvePdfUrl,
   saveProject,
 } from "./api";
@@ -22,16 +24,19 @@ function hexToDataUrl(hex: string, mime = "image/png"): string {
   return `data:${mime};base64,${btoa(bytes)}`;
 }
 
-async function fetchAsHex(url: string): Promise<string> {
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`Failed to fetch ${url}`);
+function nextSampleId(samples: SampleData[]): string {
+  let maxId = 0;
+  for (const sample of samples) {
+    const n = Number(sample.sampleId);
+    if (Number.isFinite(n)) {
+      maxId = Math.max(maxId, n);
+    }
   }
-  const ab = await res.arrayBuffer();
-  const arr = new Uint8Array(ab);
-  return Array.from(arr)
-    .map((x) => x.toString(16).padStart(2, "0"))
-    .join("");
+  return String(maxId + 1).padStart(3, "0");
+}
+
+function sampleFileUrl(projectId: string, sampleId: string, fileName: string): string {
+  return `http://127.0.0.1:8000/api/project/${projectId}/samples/${sampleId}/${fileName}`;
 }
 
 export function App() {
@@ -53,13 +58,16 @@ export function App() {
   const [candidateScores, setCandidateScores] = useState<number[]>([]);
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
   const [maskPreviewHex, setMaskPreviewHex] = useState("");
+  const [isPredicting, setIsPredicting] = useState(false);
 
   const [samples, setSamples] = useState<SampleData[]>([]);
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
   const [replaceSampleId, setReplaceSampleId] = useState<string | null>(null);
 
   const requestCounterRef = useRef(0);
-  const latestAppliedRequestRef = useRef(0);
+  const latestAcceptedRequestIdRef = useRef(0);
+  const predictTokenRef = useRef(0);
+  const activePredictTokenRef = useRef(0);
 
   const projectIdRef = useRef(`project_${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`);
 
@@ -68,9 +76,10 @@ export function App() {
       try {
         const [health, cam] = await Promise.all([getHealth(), getCameraStatus()]);
         setCameraStatus(cam);
-        const gpu = (health as { gpu?: { device_name?: string; capability?: string; model_loaded?: boolean } }).gpu;
+        const gpu = (health as { gpu?: { device_name?: string; capability?: string; model_loaded?: boolean; error?: string } }).gpu;
         if (gpu) {
-          setGpuStatus(`${gpu.device_name ?? "GPU"} sm_${gpu.capability?.replace(".", "") ?? "??"} SAM:${gpu.model_loaded ? "loaded" : "idle"}`);
+          const suffix = gpu.error ? ` ERR:${gpu.error}` : "";
+          setGpuStatus(`${gpu.device_name ?? "GPU"} sm_${gpu.capability?.replace(".", "") ?? "??"} SAM:${gpu.model_loaded ? "loaded" : "idle"}${suffix}`);
         }
         setStatusText("Ready");
       } catch (err) {
@@ -79,27 +88,44 @@ export function App() {
     })();
   }, []);
 
+  function invalidatePredictions(clearMask = true) {
+    predictTokenRef.current += 1;
+    activePredictTokenRef.current = 0;
+    setIsPredicting(false);
+    setCandidateMasks([]);
+    setCandidateScores([]);
+    setSelectedCandidateIndex(0);
+    if (clearMask) {
+      setMaskPreviewHex("");
+    }
+  }
+
   useEffect(() => {
     if (!captureId || !segReady) {
       return;
     }
     const posCount = prompts.filter((p) => p.label === 1).length;
     if (posCount === 0) {
-      setCandidateMasks([]);
-      setCandidateScores([]);
-      setMaskPreviewHex("");
+      invalidatePredictions();
       return;
     }
 
     const reqId = ++requestCounterRef.current;
+    const token = ++predictTokenRef.current;
+    activePredictTokenRef.current = token;
+    setIsPredicting(true);
     setStatusText("Running SAM inference...");
+    const reqCapture = captureId;
 
-    void predictMask(captureId, prompts, reqId)
+    void predictMask(reqCapture, prompts, reqId)
       .then((resp) => {
-        if (resp.request_id < latestAppliedRequestRef.current) {
+        if (activePredictTokenRef.current !== token) {
           return;
         }
-        latestAppliedRequestRef.current = resp.request_id;
+        if (reqCapture !== captureId) {
+          return;
+        }
+        latestAcceptedRequestIdRef.current = resp.request_id;
         setCandidateMasks(resp.masks);
         setCandidateScores(resp.scores);
         const idx = resp.best_index >= 0 ? resp.best_index : 0;
@@ -107,7 +133,16 @@ export function App() {
         setMaskPreviewHex(resp.masks[idx] ?? "");
         setStatusText("Segmentation updated");
       })
-      .catch((err) => setStatusText(`SAM error: ${(err as Error).message}`));
+      .catch((err) => {
+        if (activePredictTokenRef.current === token) {
+          setStatusText(`SAM error: ${(err as Error).message}`);
+        }
+      })
+      .finally(() => {
+        if (activePredictTokenRef.current === token) {
+          setIsPredicting(false);
+        }
+      });
   }, [captureId, prompts, segReady]);
 
   async function onOpenPdf(ev: React.ChangeEvent<HTMLInputElement>) {
@@ -129,12 +164,9 @@ export function App() {
       setFrozenSize({ width: cap.width, height: cap.height });
       setFrozenImageHex(cap.capture_png_hex);
       setPrompts([]);
-      setMaskPreviewHex("");
-      setCandidateMasks([]);
-      setCandidateScores([]);
-      setSelectedCandidateIndex(0);
-      latestAppliedRequestRef.current = 0;
       requestCounterRef.current = 0;
+      latestAcceptedRequestIdRef.current = 0;
+      invalidatePredictions();
 
       await prepareEmbedding(cap.capture_id);
       setSegReady(true);
@@ -150,14 +182,12 @@ export function App() {
 
   function onUndoPrompt() {
     setPrompts((prev) => prev.slice(0, -1));
+    invalidatePredictions();
   }
 
   function onResetPrompts() {
     setPrompts([]);
-    setMaskPreviewHex("");
-    setCandidateMasks([]);
-    setCandidateScores([]);
-    setSelectedCandidateIndex(0);
+    invalidatePredictions();
   }
 
   function onRedoSegmentation() {
@@ -169,20 +199,25 @@ export function App() {
     if (!captureId) {
       return;
     }
+    if (isPredicting) {
+      setStatusText("Wait for inference to finish");
+      return;
+    }
     if (!candidateMasks[selectedCandidateIndex]) {
       setStatusText("No mask candidate selected");
       return;
     }
 
     try {
-      const resp = await acceptMask(captureId, latestAppliedRequestRef.current, selectedCandidateIndex);
-      const inherit = samples.length > 0 ? samples[samples.length - 1].transform : null;
-      const nextId = replaceSampleId ?? String(samples.length + 1).padStart(3, "0");
-
+      const resp = await acceptMask(captureId, latestAcceptedRequestIdRef.current, selectedCandidateIndex);
       const replacementTarget = samples.find((s) => s.sampleId === replaceSampleId);
+      const inherit = samples.length > 0 ? samples[samples.length - 1].transform : null;
+      const nextId = replaceSampleId ?? nextSampleId(samples);
+
       const sample: SampleData = {
         sampleId: nextId,
         captureId,
+        pageNumber: replacementTarget?.pageNumber ?? selectedPage,
         width: frozenSize?.width ?? 0,
         height: frozenSize?.height ?? 0,
         prompts,
@@ -245,19 +280,29 @@ export function App() {
     }
 
     try {
-      const reg = await registerCaptureImage(target.capturePngHex);
+      let captureFile: File;
+      if (target.capturePngHex) {
+        const bytes = Uint8Array.from((target.capturePngHex.match(/.{1,2}/g) ?? []).map((x) => parseInt(x, 16)));
+        captureFile = new File([bytes], "capture.png", { type: "image/png" });
+      } else {
+        const fileName = target.captureFile ?? "capture.png";
+        captureFile = await fetchFileAsFile(
+          sampleFileUrl(projectIdRef.current, target.sampleId, fileName),
+          fileName
+        );
+      }
+
+      const reg = await registerCaptureFile(captureFile);
       await prepareEmbedding(reg.capture_id);
+      const captureHex = target.capturePngHex ?? (await fileToHex(captureFile));
       setReplaceSampleId(target.sampleId);
       setCaptureId(reg.capture_id);
-      setFrozenImageHex(target.capturePngHex);
+      setFrozenImageHex(captureHex);
       setFrozenSize({ width: reg.width, height: reg.height });
       setPrompts([]);
-      setMaskPreviewHex("");
-      setCandidateMasks([]);
-      setCandidateScores([]);
-      setSelectedCandidateIndex(0);
-      latestAppliedRequestRef.current = 0;
       requestCounterRef.current = 0;
+      latestAcceptedRequestIdRef.current = 0;
+      invalidatePredictions();
       setSegReady(true);
       setStatusText(`Redo segmentation prepared for Sample ${target.sampleId}`);
     } catch (err) {
@@ -276,6 +321,17 @@ export function App() {
           samples,
         },
         pdfFile ?? undefined
+      );
+      setSamples((prev) =>
+        prev.map((s) => ({
+          ...s,
+          capturePngHex: undefined,
+          maskPngHex: undefined,
+          contourBwPngHex: undefined,
+          captureFile: s.captureFile ?? `${s.sampleId}_capture.png`,
+          maskFile: s.maskFile ?? `${s.sampleId}_mask.png`,
+          contourBwFile: s.contourBwFile ?? `${s.sampleId}_contour_bw.png`,
+        }))
       );
       setStatusText(`Project saved: ${projectIdRef.current}`);
     } catch (err) {
@@ -301,14 +357,14 @@ export function App() {
       setPdfFile(null);
       setPdfSource(resolvePdfUrl(proj.source_pdf_url));
 
-      const loadedSamples: SampleData[] = [];
-      for (const s of proj.samples) {
-        const captureHex = await fetchAsHex(`http://127.0.0.1:8000/api/project/${proj.project_id}/samples/${s.sample_id}/capture.png`);
-        const maskHex = await fetchAsHex(`http://127.0.0.1:8000/api/project/${proj.project_id}/samples/${s.sample_id}/mask.png`);
-        const contourHex = await fetchAsHex(`http://127.0.0.1:8000/api/project/${proj.project_id}/samples/${s.sample_id}/contour_bw.png`);
-        loadedSamples.push({
+      const loadedSamples: SampleData[] = proj.samples.map((s) => {
+        const captureFile = s.files?.capture ?? "capture.png";
+        const maskFile = s.files?.mask ?? "mask.png";
+        const contourFile = s.files?.contour_bw ?? "contour_bw.png";
+        return {
           sampleId: s.sample_id,
           captureId: s.capture_id,
+          pageNumber: s.page_number ?? 1,
           width: s.width,
           height: s.height,
           prompts: s.prompts,
@@ -321,11 +377,11 @@ export function App() {
             visible: s.transform.visible,
             color: s.transform.color,
           },
-          capturePngHex: captureHex,
-          maskPngHex: maskHex,
-          contourBwPngHex: contourHex,
-        });
-      }
+          captureFile,
+          maskFile,
+          contourBwFile: contourFile,
+        };
+      });
       setSamples(loadedSamples);
       setSelectedSampleId(loadedSamples[0]?.sampleId ?? null);
       setStatusText(`Loaded project ${pick}`);
@@ -373,12 +429,12 @@ export function App() {
           <div className="panel">
             <div className="panel-title">Segmentation Controls</div>
             <div className="control-row">
-              <button onClick={onUndoPrompt} disabled={prompts.length === 0}>Undo Prompt</button>
-              <button onClick={onResetPrompts}>Reset Prompts</button>
-              <button onClick={onRedoSegmentation}>Redo</button>
+              <button onClick={onUndoPrompt} disabled={prompts.length === 0 || isPredicting}>Undo Prompt</button>
+              <button onClick={onResetPrompts} disabled={isPredicting}>Reset Prompts</button>
+              <button onClick={onRedoSegmentation} disabled={isPredicting}>Redo</button>
             </div>
             <div className="control-row">
-              <button onClick={onAcceptMask} disabled={!hasSegCandidates}>Accept Mask</button>
+              <button onClick={onAcceptMask} disabled={!hasSegCandidates || isPredicting}>Accept Mask</button>
               <button onClick={() => setReplaceSampleId(null)}>Cancel</button>
             </div>
             <div className="control-row">
@@ -390,6 +446,7 @@ export function App() {
                   setSelectedCandidateIndex(idx);
                   setMaskPreviewHex(candidateMasks[idx] ?? "");
                 }}
+                disabled={isPredicting || candidateScores.length === 0}
               >
                 {candidateScores.map((score, idx) => (
                   <option key={idx} value={idx}>
@@ -407,7 +464,7 @@ export function App() {
               {samples.map((s) => (
                 <div key={s.sampleId} className={selectedSampleId === s.sampleId ? "sample-item active" : "sample-item"}>
                   <button className="sample-label" onClick={() => setSelectedSampleId(s.sampleId)}>
-                    Sample {s.sampleId}
+                    Sample {s.sampleId} (P{s.pageNumber})
                   </button>
                   <button onClick={() => updateSample(s.sampleId, { visible: !s.transform.visible })}>{s.transform.visible ? "Hide" : "Show"}</button>
                   <button onClick={() => deleteSample(s.sampleId)}>Delete</button>
@@ -415,7 +472,7 @@ export function App() {
               ))}
             </div>
             <div className="control-row">
-              <button onClick={redoSelectedSample} disabled={!selectedSampleId}>Redo Segmentation</button>
+              <button onClick={redoSelectedSample} disabled={!selectedSampleId || isPredicting}>Redo Segmentation</button>
               <label>
                 Overlay Scale
                 <input

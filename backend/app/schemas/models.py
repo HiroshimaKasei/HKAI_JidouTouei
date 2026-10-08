@@ -31,6 +31,12 @@ class RegisterCaptureImageRequest(BaseModel):
     image_png_hex: str
 
 
+class SampleFileRefs(BaseModel):
+    capture: str = ""
+    mask: str = ""
+    contour_bw: str = ""
+
+
 class SampleTransform(BaseModel):
     tx: float = 0.0
     ty: float = 0.0
@@ -42,11 +48,13 @@ class SampleTransform(BaseModel):
 class SaveSamplePayload(BaseModel):
     sample_id: str
     capture_id: str
+    page_number: int = 1
     width: int
     height: int
     prompts: list[PromptPoint] = Field(default_factory=list)
     contour_points: list[list[list[float]]] = Field(default_factory=list)
     hole_points: list[list[list[float]]] = Field(default_factory=list)
+    files: SampleFileRefs = Field(default_factory=SampleFileRefs)
     transform: SampleTransform = Field(default_factory=SampleTransform)
 
 

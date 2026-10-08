@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
-import { Layer, Line, Stage } from "react-konva";
+import { Group, Layer, Line, Stage } from "react-konva";
 
 import type { SampleData } from "../types/models";
 
@@ -17,10 +17,38 @@ type Props = {
   onUpdateSample: (sampleId: string, patch: Partial<SampleData["transform"]>) => void;
 };
 
-type DragMode = { kind: "none" } | { kind: "translate"; sampleId: string } | { kind: "rotate"; sampleId: string; startDeg: number; startRot: number };
+type DragMode =
+  | { kind: "none" }
+  | {
+      kind: "translate";
+      sampleId: string;
+      startPointer: { x: number; y: number };
+      startTx: number;
+      startTy: number;
+    }
+  | {
+      kind: "rotate";
+      sampleId: string;
+      startAngleDeg: number;
+      startRotDeg: number;
+    };
 
 const COLORS = ["#ff5500", "#0099ff", "#17a05d", "#c83f7f", "#b68000", "#1e78b7"];
 export const sampleColor = (index: number) => COLORS[index % COLORS.length];
+
+function calcCentroid(sample: SampleData): { x: number; y: number } {
+  const all = [...sample.outerContours, ...sample.holeContours].flat();
+  if (all.length === 0) {
+    return { x: 0, y: 0 };
+  }
+  let sx = 0;
+  let sy = 0;
+  for (const p of all) {
+    sx += p[0];
+    sy += p[1];
+  }
+  return { x: sx / all.length, y: sy / all.length };
+}
 
 export function PdfOverlayPanel({
   pdfSource,
@@ -41,13 +69,35 @@ export function PdfOverlayPanel({
   const [lastMouse, setLastMouse] = useState({ x: 0, y: 0 });
   const [dragMode, setDragMode] = useState<DragMode>({ kind: "none" });
 
-  const visibleSamples = useMemo(() => samples.filter((s) => s.transform.visible), [samples]);
+  const visibleSamples = useMemo(
+    () => samples.filter((s) => s.transform.visible && (s.pageNumber ?? 1) === selectedPage),
+    [samples, selectedPage]
+  );
+
+  const centroidBySample = useMemo(() => {
+    const map = new Map<string, { x: number; y: number }>();
+    for (const s of visibleSamples) {
+      map.set(s.sampleId, calcCentroid(s));
+    }
+    return map;
+  }, [visibleSamples]);
 
   function onDocLoadSuccess(info: { numPages: number }) {
     setNumPages(info.numPages);
     if (selectedPage > info.numPages) {
       setSelectedPage(info.numPages);
     }
+  }
+
+  function toContentPoint(clientX: number, clientY: number): { x: number; y: number } | null {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect) {
+      return null;
+    }
+    return {
+      x: (clientX - rect.left - viewportPan.x) / pdfZoom,
+      y: (clientY - rect.top - viewportPan.y) / pdfZoom,
+    };
   }
 
   function onWheel(ev: React.WheelEvent<HTMLDivElement>) {
@@ -80,7 +130,7 @@ export function PdfOverlayPanel({
   }
 
   function onViewportMouseMove(ev: React.MouseEvent<HTMLDivElement, MouseEvent>) {
-    if (!middleDragging) {
+    if (!middleDragging || dragMode.kind !== "none") {
       return;
     }
     const dx = ev.clientX - lastMouse.x;
@@ -94,61 +144,72 @@ export function PdfOverlayPanel({
     setDragMode({ kind: "none" });
   }
 
-  function sampleCenter(sample: SampleData): { x: number; y: number } {
-    const all = sample.outerContours.flat();
-    if (all.length === 0) {
-      return { x: 0, y: 0 };
-    }
-    const sx = all.reduce((acc, p) => acc + p[0], 0);
-    const sy = all.reduce((acc, p) => acc + p[1], 0);
-    return { x: sx / all.length, y: sy / all.length };
-  }
-
-  function onStageMouseDown(ev: { evt: MouseEvent; target: { attrs: Record<string, unknown> } }) {
-    const sampleId = ev.target.attrs["data-sid"] as string | undefined;
-    if (!sampleId) {
+  function onSampleMouseDown(sample: SampleData, evt: MouseEvent) {
+    setSelectedSampleId(sample.sampleId);
+    const pointer = toContentPoint(evt.clientX, evt.clientY);
+    if (!pointer) {
       return;
     }
 
-    const sample = samples.find((s) => s.sampleId === sampleId);
-    if (!sample) {
+    if (evt.button === 0) {
+      setDragMode({
+        kind: "translate",
+        sampleId: sample.sampleId,
+        startPointer: pointer,
+        startTx: sample.transform.tx,
+        startTy: sample.transform.ty,
+      });
       return;
     }
 
-    setSelectedSampleId(sampleId);
-
-    if (ev.evt.button === 0) {
-      setDragMode({ kind: "translate", sampleId });
-      setLastMouse({ x: ev.evt.clientX, y: ev.evt.clientY });
-    } else if (ev.evt.button === 2) {
-      const c = sampleCenter(sample);
-      const angle = Math.atan2(ev.evt.offsetY - c.y, ev.evt.offsetX - c.x) * (180 / Math.PI);
-      setDragMode({ kind: "rotate", sampleId, startDeg: angle, startRot: sample.transform.rotationDeg });
+    if (evt.button === 2) {
+      evt.preventDefault();
+      const c = centroidBySample.get(sample.sampleId) ?? { x: 0, y: 0 };
+      const center = {
+        x: sample.transform.tx + c.x,
+        y: sample.transform.ty + c.y,
+      };
+      const angle = Math.atan2(pointer.y - center.y, pointer.x - center.x) * (180 / Math.PI);
+      setDragMode({
+        kind: "rotate",
+        sampleId: sample.sampleId,
+        startAngleDeg: angle,
+        startRotDeg: sample.transform.rotationDeg,
+      });
     }
   }
 
   function onStageMouseMove(ev: { evt: MouseEvent }) {
+    const pointer = toContentPoint(ev.evt.clientX, ev.evt.clientY);
+    if (!pointer) {
+      return;
+    }
+
     if (dragMode.kind === "translate") {
-      const dx = (ev.evt.clientX - lastMouse.x) / pdfZoom;
-      const dy = (ev.evt.clientY - lastMouse.y) / pdfZoom;
-      setLastMouse({ x: ev.evt.clientX, y: ev.evt.clientY });
       const sample = samples.find((s) => s.sampleId === dragMode.sampleId);
       if (!sample) {
         return;
       }
       onUpdateSample(sample.sampleId, {
-        tx: sample.transform.tx + dx,
-        ty: sample.transform.ty + dy,
+        tx: dragMode.startTx + (pointer.x - dragMode.startPointer.x),
+        ty: dragMode.startTy + (pointer.y - dragMode.startPointer.y),
       });
-    } else if (dragMode.kind === "rotate") {
+      return;
+    }
+
+    if (dragMode.kind === "rotate") {
       const sample = samples.find((s) => s.sampleId === dragMode.sampleId);
       if (!sample) {
         return;
       }
-      const c = sampleCenter(sample);
-      const angle = Math.atan2(ev.evt.offsetY - c.y, ev.evt.offsetX - c.x) * (180 / Math.PI);
+      const c = centroidBySample.get(sample.sampleId) ?? { x: 0, y: 0 };
+      const center = {
+        x: sample.transform.tx + c.x,
+        y: sample.transform.ty + c.y,
+      };
+      const angle = Math.atan2(pointer.y - center.y, pointer.x - center.x) * (180 / Math.PI);
       onUpdateSample(sample.sampleId, {
-        rotationDeg: dragMode.startRot + (angle - dragMode.startDeg),
+        rotationDeg: dragMode.startRotDeg + (angle - dragMode.startAngleDeg),
       });
     }
   }
@@ -189,33 +250,42 @@ export function PdfOverlayPanel({
             />
           </Document>
           <div className="overlay-stage-wrap">
-            <Stage width={stageW} height={stageH} onMouseDown={onStageMouseDown} onMouseMove={onStageMouseMove} onMouseUp={() => setDragMode({ kind: "none" })}>
+            <Stage width={stageW} height={stageH} onMouseMove={onStageMouseMove} onMouseUp={() => setDragMode({ kind: "none" })}>
               <Layer>
                 {visibleSamples.map((sample) => {
                   const isSelected = sample.sampleId === selectedSampleId;
                   const baseStroke = isSelected ? 2.4 : 1.4;
+                  const centroid = centroidBySample.get(sample.sampleId) ?? { x: 0, y: 0 };
+                  const allContours = [...sample.outerContours, ...sample.holeContours];
 
-                  const groupContours = [...sample.outerContours, ...sample.holeContours];
-                  return groupContours.map((contour, idx) => {
-                    const flat = contour.flat();
-                    return (
-                      <Line
-                        key={`${sample.sampleId}-${idx}`}
-                        points={flat}
-                        x={sample.transform.tx}
-                        y={sample.transform.ty}
-                        rotation={sample.transform.rotationDeg}
-                        scaleX={overlayScale}
-                        scaleY={overlayScale}
-                        closed
-                        stroke={sample.transform.color}
-                        strokeWidth={baseStroke}
-                        listening
-                        hitStrokeWidth={8}
-                        attrs={{ "data-sid": sample.sampleId }}
-                      />
-                    );
-                  });
+                  return (
+                    <Group
+                      key={sample.sampleId}
+                      x={sample.transform.tx + centroid.x}
+                      y={sample.transform.ty + centroid.y}
+                      rotation={sample.transform.rotationDeg}
+                      scaleX={overlayScale}
+                      scaleY={overlayScale}
+                      listening
+                      onMouseDown={(e) => onSampleMouseDown(sample, e.evt as MouseEvent)}
+                      onContextMenu={(e) => e.evt.preventDefault()}
+                    >
+                      {allContours.map((contour, idx) => {
+                        const shifted = contour.flatMap((pt) => [pt[0] - centroid.x, pt[1] - centroid.y]);
+                        return (
+                          <Line
+                            key={`${sample.sampleId}-${idx}`}
+                            points={shifted}
+                            closed
+                            stroke={sample.transform.color}
+                            strokeWidth={baseStroke / Math.max(overlayScale, 0.01)}
+                            hitStrokeWidth={10 / Math.max(overlayScale, 0.01)}
+                            listening
+                          />
+                        );
+                      })}
+                    </Group>
+                  );
                 })}
               </Layer>
             </Stage>

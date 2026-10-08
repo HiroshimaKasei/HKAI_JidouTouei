@@ -15,15 +15,19 @@ export type SampleTransform = {
 export type SampleData = {
   sampleId: string;
   captureId: string;
+  pageNumber: number;
   width: number;
   height: number;
   prompts: PromptPoint[];
   outerContours: number[][][];
   holeContours: number[][][];
   transform: SampleTransform;
-  capturePngHex: string;
-  maskPngHex: string;
-  contourBwPngHex: string;
+  capturePngHex?: string;
+  maskPngHex?: string;
+  contourBwPngHex?: string;
+  captureFile?: string;
+  maskFile?: string;
+  contourBwFile?: string;
 };
 
 export type CameraStatus = {

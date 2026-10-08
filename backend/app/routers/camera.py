@@ -19,7 +19,10 @@ def status() -> dict[str, object]:
 
 @router.get("/frame")
 def frame() -> Response:
-    img = camera_service.get_live_frame()
+    try:
+        img = camera_service.get_live_preview_frame()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to encode frame")
@@ -45,7 +48,10 @@ async def upload_test_image(file: UploadFile = File(...)) -> dict[str, object]:
 
 @router.post("/capture")
 def capture() -> JSONResponse:
-    cap = camera_service.capture()
+    try:
+        cap = camera_service.capture()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     sam_service.register_capture(cap.capture_id, cap.image)
     h, w = cap.image.shape[:2]
     ok, buf = cv2.imencode(".png", cap.image)
@@ -60,3 +66,9 @@ def capture() -> JSONResponse:
             "capture_png_hex": buf.tobytes().hex(),
         }
     )
+
+
+@router.post("/test-image/clear")
+def clear_test_image() -> dict[str, object]:
+    camera_service.clear_test_mode()
+    return camera_service.status()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 import uuid
 import tempfile
@@ -15,11 +15,16 @@ router = APIRouter(prefix="/api/sam", tags=["sam"])
 
 
 @router.post("/register-image")
-def register_image(req: RegisterCaptureImageRequest) -> dict[str, object]:
-    try:
-        raw = bytes.fromhex(req.image_png_hex)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail="Invalid image_png_hex") from exc
+async def register_image(file: UploadFile | None = File(None), req: RegisterCaptureImageRequest | None = None) -> dict[str, object]:
+    if file is not None:
+        raw = await file.read()
+    elif req is not None:
+        try:
+            raw = bytes.fromhex(req.image_png_hex)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid image_png_hex") from exc
+    else:
+        raise HTTPException(status_code=400, detail="Provide file or image_png_hex")
 
     arr = np.frombuffer(raw, dtype=np.uint8)
     image = cv2.imdecode(arr, cv2.IMREAD_COLOR)

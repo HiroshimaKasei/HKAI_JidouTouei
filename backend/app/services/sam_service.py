@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from collections import OrderedDict
+import threading
 
 import cv2
 import numpy as np
@@ -17,18 +19,27 @@ class PredictionBundle:
 
 
 @dataclass
+class CaptureEmbedding:
+    features: torch.Tensor
+    input_size: tuple[int, int]
+    original_size: tuple[int, int]
+
+
+@dataclass
 class CaptureSamState:
     image_bgr: np.ndarray
-    embedding_ready: bool = False
+    embedding: CaptureEmbedding | None = None
     latest_prediction: PredictionBundle | None = None
 
 
 class SamService:
     def __init__(self) -> None:
-        self._states: dict[str, CaptureSamState] = {}
+        self._states: OrderedDict[str, CaptureSamState] = OrderedDict()
+        self._max_cached_captures = 16
         self._model_loaded = False
         self._predictor = None
         self._device = "cuda"
+        self._lock = threading.RLock()
         self._available = True
         self._startup_error = ""
         try:
@@ -78,6 +89,7 @@ class SamService:
             **self._gpu_details,
             "model_loaded": self._model_loaded,
             "error": self._startup_error,
+            "cached_captures": len(self._states),
         }
 
     def _ensure_available(self) -> None:
@@ -102,39 +114,71 @@ class SamService:
         self._predictor = SamPredictor(sam)
         self._model_loaded = True
 
+    def _touch_state(self, capture_id: str) -> CaptureSamState:
+        state = self._states.pop(capture_id)
+        self._states[capture_id] = state
+        return state
+
+    def _evict_if_needed(self) -> None:
+        while len(self._states) > self._max_cached_captures:
+            self._states.popitem(last=False)
+
     def register_capture(self, capture_id: str, image_bgr: np.ndarray) -> None:
-        self._states[capture_id] = CaptureSamState(image_bgr=image_bgr)
+        with self._lock:
+            self._states[capture_id] = CaptureSamState(image_bgr=image_bgr)
+            self._touch_state(capture_id)
+            self._evict_if_needed()
+
+    def _snapshot_embedding(self) -> CaptureEmbedding:
+        features = self._predictor.features
+        if features is None:
+            raise RuntimeError("SAM predictor produced empty embedding")
+        return CaptureEmbedding(
+            features=features.detach().clone(),
+            input_size=tuple(self._predictor.input_size),
+            original_size=tuple(self._predictor.original_size),
+        )
+
+    def _restore_embedding(self, embedding: CaptureEmbedding) -> None:
+        self._predictor.features = embedding.features
+        self._predictor.input_size = embedding.input_size
+        self._predictor.original_size = embedding.original_size
+        self._predictor.is_image_set = True
 
     def prepare_embedding(self, capture_id: str) -> None:
-        self._load_model()
-        state = self._states.get(capture_id)
-        if state is None:
-            raise KeyError("Unknown capture_id")
-        image_rgb = cv2.cvtColor(state.image_bgr, cv2.COLOR_BGR2RGB)
-        self._predictor.set_image(image_rgb)
-        state.embedding_ready = True
+        with self._lock:
+            self._load_model()
+            state = self._states.get(capture_id)
+            if state is None:
+                raise KeyError("Unknown capture_id")
+            self._touch_state(capture_id)
+            image_rgb = cv2.cvtColor(state.image_bgr, cv2.COLOR_BGR2RGB)
+            self._predictor.set_image(image_rgb)
+            state.embedding = self._snapshot_embedding()
 
     def predict(self, capture_id: str, points: list[tuple[float, float]], labels: list[int], request_id: int) -> dict[str, Any]:
         self._ensure_available()
-        state = self._states.get(capture_id)
-        if state is None:
-            raise KeyError("Unknown capture_id")
-        if not state.embedding_ready:
-            raise RuntimeError("Embedding not prepared")
-
         if len(points) == 0:
             return {"request_id": request_id, "scores": [], "best_index": -1, "masks": []}
 
         point_arr = np.array(points, dtype=np.float32)
         label_arr = np.array(labels, dtype=np.int32)
 
-        masks, scores, _ = self._predictor.predict(
-            point_coords=point_arr,
-            point_labels=label_arr,
-            multimask_output=True,
-        )
+        with self._lock:
+            state = self._states.get(capture_id)
+            if state is None:
+                raise KeyError("Unknown capture_id")
+            self._touch_state(capture_id)
+            if state.embedding is None:
+                raise RuntimeError("Embedding not prepared")
 
-        state.latest_prediction = PredictionBundle(request_id=request_id, masks=masks, scores=scores)
+            self._restore_embedding(state.embedding)
+            masks, scores, _ = self._predictor.predict(
+                point_coords=point_arr,
+                point_labels=label_arr,
+                multimask_output=True,
+            )
+            state.latest_prediction = PredictionBundle(request_id=request_id, masks=masks, scores=scores)
 
         encoded_masks: list[str] = []
         for mask in masks:
@@ -154,16 +198,22 @@ class SamService:
 
     def get_candidate_mask(self, capture_id: str, request_id: int, candidate_index: int) -> np.ndarray:
         self._ensure_available()
-        state = self._states.get(capture_id)
-        if state is None or state.latest_prediction is None:
-            raise KeyError("No prediction available")
-        pred = state.latest_prediction
-        if pred.request_id != request_id:
-            raise KeyError("Stale request_id")
-        if candidate_index < 0 or candidate_index >= pred.masks.shape[0]:
-            raise IndexError("Invalid candidate_index")
+        with self._lock:
+            state = self._states.get(capture_id)
+            if state is None or state.latest_prediction is None:
+                raise KeyError("No prediction available")
+            self._touch_state(capture_id)
+            pred = state.latest_prediction
+            if pred.request_id != request_id:
+                raise KeyError("Stale request_id")
+            if candidate_index < 0 or candidate_index >= pred.masks.shape[0]:
+                raise IndexError("Invalid candidate_index")
 
-        mask = pred.masks[candidate_index].astype(np.uint8)
-        if int(mask.sum()) == 0:
-            raise ValueError("Empty mask is not allowed")
-        return mask
+            mask = pred.masks[candidate_index].astype(np.uint8)
+            if int(mask.sum()) == 0:
+                raise ValueError("Empty mask is not allowed")
+            return mask
+
+    def release_capture(self, capture_id: str) -> None:
+        with self._lock:
+            self._states.pop(capture_id, None)
