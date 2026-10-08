@@ -73,7 +73,7 @@ export async function capture(): Promise<{ capture_id: string; width: number; he
   return res.json();
 }
 
-export async function prepareEmbedding(captureId: string): Promise<void> {
+export async function prepareEmbedding(captureId: string): Promise<{ ok: boolean; state?: string; prepare_ms?: number }> {
   const res = await fetch(`${BASE}/api/sam/prepare`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -82,6 +82,7 @@ export async function prepareEmbedding(captureId: string): Promise<void> {
   if (!res.ok) {
     throw new Error(await res.text());
   }
+  return res.json();
 }
 
 export async function predictMask(

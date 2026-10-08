@@ -29,7 +29,6 @@ MVP implementation for local factory-side PDF overlay alignment using camera cap
 - Windows 11
 - Python 3.11 recommended
 - Node.js 20+ (for frontend build/dev)
-- NVIDIA GPU with CUDA runtime compatible with your PyTorch build
 - SAM ViT-B checkpoint file
 
 ## Setup
@@ -54,7 +53,20 @@ npm --prefix frontend install
 - Put the official ViT-B checkpoint at:
 	- models/sam_vit_b_01ec64.pth
 
-4. Run backend and frontend:
+4. Select SAM device mode (default is auto):
+
+```powershell
+# auto: use CUDA if available, else CPU
+$env:SAM_DEVICE="auto"
+
+# force CPU
+$env:SAM_DEVICE="cpu"
+
+# force CUDA (errors if CUDA is unavailable)
+$env:SAM_DEVICE="cuda"
+```
+
+5. Run backend and frontend:
 
 ```powershell
 start.bat
@@ -72,11 +84,14 @@ cd frontend
 npm run dev
 ```
 
-## GPU policy and verification
+## SAM runtime policy and verification
 
-- This MVP does not silently fall back to CPU for SAM.
-- Backend validates CUDA availability and runs a real GPU tensor matmul before SAM model load.
-- If GPU/CUDA is not ready, SAM endpoints return explicit errors while API remains up.
+- Official Meta SAM ViT-B is used in all modes.
+- `SAM_DEVICE=auto` uses CUDA when operational and falls back to CPU when CUDA is unavailable.
+- `SAM_DEVICE=cpu` forces CPU and does not call CUDA functions.
+- `SAM_DEVICE=cuda` requires working CUDA and reports clear errors if unavailable.
+- The SAM checkpoint is loaded once per backend process and reused.
+- Per-capture image embeddings are cached and reused for prompt refinement.
 
 Suggested command to validate GPU in your environment:
 

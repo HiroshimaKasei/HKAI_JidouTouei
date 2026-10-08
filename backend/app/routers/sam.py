@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 import uuid
 import tempfile
@@ -15,9 +15,18 @@ router = APIRouter(prefix="/api/sam", tags=["sam"])
 
 
 @router.post("/register-image")
-async def register_image(file: UploadFile | None = File(None), req: RegisterCaptureImageRequest | None = None) -> dict[str, object]:
+async def register_image(
+    file: UploadFile | None = File(None),
+    image_png_hex: str | None = Form(None),
+    req: RegisterCaptureImageRequest | None = Body(None),
+) -> dict[str, object]:
     if file is not None:
         raw = await file.read()
+    elif image_png_hex is not None:
+        try:
+            raw = bytes.fromhex(image_png_hex)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid image_png_hex") from exc
     elif req is not None:
         try:
             raw = bytes.fromhex(req.image_png_hex)
@@ -47,7 +56,12 @@ def prepare(req: PrepareEmbeddingRequest) -> dict[str, object]:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return {"ok": True}
+    status = sam_service.gpu_status()
+    return {
+        "ok": True,
+        "state": status.get("state", "ready"),
+        "prepare_ms": status.get("last_prepare_ms"),
+    }
 
 
 @router.post("/predict")

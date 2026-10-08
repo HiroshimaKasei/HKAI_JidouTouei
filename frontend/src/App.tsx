@@ -46,7 +46,8 @@ function makeProjectId(): string {
 export function App() {
   const [statusText, setStatusText] = useState("Initializing");
   const [cameraStatus, setCameraStatus] = useState<CameraStatus | null>(null);
-  const [gpuStatus, setGpuStatus] = useState<string>("Checking GPU");
+  const [gpuStatus, setGpuStatus] = useState<string>("SAM: Checking");
+  const [samDevice, setSamDevice] = useState<"cpu" | "cuda">("cpu");
 
   const [pdfSource, setPdfSource] = useState<string | File | null>(null);
   const [pdfFile, setPdfFile] = useState<File | null>(null);
@@ -63,6 +64,7 @@ export function App() {
   const [selectedCandidateIndex, setSelectedCandidateIndex] = useState(0);
   const [maskPreviewHex, setMaskPreviewHex] = useState("");
   const [isPredicting, setIsPredicting] = useState(false);
+  const [hasLatestPrediction, setHasLatestPrediction] = useState(false);
 
   const [samples, setSamples] = useState<SampleData[]>([]);
   const [selectedSampleId, setSelectedSampleId] = useState<string | null>(null);
@@ -82,10 +84,44 @@ export function App() {
       try {
         const [health, cam] = await Promise.all([getHealth(), getCameraStatus()]);
         setCameraStatus(cam);
-        const gpu = (health as { gpu?: { device_name?: string; capability?: string; model_loaded?: boolean; error?: string } }).gpu;
-        if (gpu) {
-          const suffix = gpu.error ? ` ERR:${gpu.error}` : "";
-          setGpuStatus(`${gpu.device_name ?? "GPU"} sm_${gpu.capability?.replace(".", "") ?? "??"} SAM:${gpu.model_loaded ? "loaded" : "idle"}${suffix}`);
+        const sam = (health as {
+          sam?: {
+            active_device?: string;
+            state?: string;
+            model_loaded?: boolean;
+            error?: string;
+            device_name?: string;
+            capability?: string;
+          };
+          gpu?: {
+            active_device?: string;
+            state?: string;
+            model_loaded?: boolean;
+            error?: string;
+            device_name?: string;
+            capability?: string;
+          };
+        }).sam ?? (health as { gpu?: { active_device?: string; state?: string; model_loaded?: boolean; error?: string; device_name?: string; capability?: string } }).gpu;
+        if (sam) {
+          setSamDevice(sam.active_device === "cuda" ? "cuda" : "cpu");
+          const device = sam.active_device === "cuda" ? "GPU" : "CPU";
+          const state = sam.state ?? "idle";
+          if (sam.error) {
+            setGpuStatus(`SAM: ${device} Error (${sam.error})`);
+          } else if (state === "loading") {
+            setGpuStatus(`SAM: ${device} Loading`);
+          } else if (state === "processing") {
+            setGpuStatus(`SAM: ${device} Processing`);
+          } else if (sam.model_loaded) {
+            if (sam.active_device === "cuda") {
+              const cap = sam.capability ? ` sm_${sam.capability.replace(".", "")}` : "";
+              setGpuStatus(`SAM: GPU Ready (${sam.device_name ?? "CUDA"}${cap})`);
+            } else {
+              setGpuStatus("SAM: CPU Ready");
+            }
+          } else {
+            setGpuStatus(`SAM: ${device} Idle`);
+          }
         }
         setStatusText("Ready");
       } catch (err) {
@@ -98,6 +134,7 @@ export function App() {
     predictTokenRef.current += 1;
     activePredictTokenRef.current = 0;
     setIsPredicting(false);
+    setHasLatestPrediction(false);
     setCandidateMasks([]);
     setCandidateScores([]);
     setSelectedCandidateIndex(0);
@@ -139,6 +176,8 @@ export function App() {
     const token = ++predictTokenRef.current;
     activePredictTokenRef.current = token;
     setIsPredicting(true);
+    setHasLatestPrediction(false);
+    setGpuStatus(samDevice === "cuda" ? "SAM: GPU Processing" : "SAM: CPU Processing");
     setStatusText("Running SAM inference...");
     const reqCapture = captureId;
 
@@ -156,11 +195,19 @@ export function App() {
         const idx = resp.best_index >= 0 ? resp.best_index : 0;
         setSelectedCandidateIndex(idx);
         setMaskPreviewHex(resp.masks[idx] ?? "");
-        setStatusText("Segmentation updated");
+        setHasLatestPrediction(true);
+        const predMs = (resp as { prediction_ms?: number }).prediction_ms;
+        setStatusText(predMs ? `Segmentation updated (${predMs.toFixed(0)} ms)` : "Segmentation updated");
+        setGpuStatus(samDevice === "cuda" ? "SAM: GPU Ready" : "SAM: CPU Ready");
       })
       .catch((err) => {
         if (activePredictTokenRef.current === token) {
+          setCandidateMasks([]);
+          setCandidateScores([]);
+          setMaskPreviewHex("");
+          setHasLatestPrediction(false);
           setStatusText(`SAM error: ${(err as Error).message}`);
+          setGpuStatus(samDevice === "cuda" ? `SAM: GPU Error (${(err as Error).message})` : `SAM: CPU Error (${(err as Error).message})`);
         }
       })
       .finally(() => {
@@ -206,11 +253,16 @@ export function App() {
       invalidatePredictions();
       setIsDirty(true);
 
-      await prepareEmbedding(cap.capture_id);
+      setGpuStatus(samDevice === "cuda" ? "SAM: GPU Loading" : "SAM: CPU Loading");
+
+      const prep = (await prepareEmbedding(cap.capture_id)) as { prepare_ms?: number } | void;
       setSegReady(true);
-      setStatusText("Capture frozen. Add SAM prompts.");
+      const prepMs = prep && typeof prep === "object" ? prep.prepare_ms : undefined;
+      setStatusText(prepMs ? `Capture frozen. Add SAM prompts. Embedding: ${prepMs.toFixed(0)} ms` : "Capture frozen. Add SAM prompts.");
+      setGpuStatus(samDevice === "cuda" ? "SAM: GPU Ready" : "SAM: CPU Ready");
     } catch (err) {
       setStatusText(`Capture error: ${(err as Error).message}`);
+      setGpuStatus(samDevice === "cuda" ? `SAM: GPU Error (${(err as Error).message})` : `SAM: CPU Error (${(err as Error).message})`);
     }
   }
 
@@ -242,6 +294,10 @@ export function App() {
     }
     if (isPredicting) {
       setStatusText("Wait for inference to finish");
+      return;
+    }
+    if (!hasLatestPrediction) {
+      setStatusText("Wait for a successful latest prediction");
       return;
     }
     if (!candidateMasks[selectedCandidateIndex]) {
@@ -504,7 +560,7 @@ export function App() {
               <button onClick={onRedoSegmentation} disabled={isPredicting}>Redo</button>
             </div>
             <div className="control-row">
-              <button onClick={onAcceptMask} disabled={!hasSegCandidates || isPredicting}>Accept Mask</button>
+              <button onClick={onAcceptMask} disabled={!hasSegCandidates || isPredicting || !hasLatestPrediction}>Accept Mask</button>
               <button onClick={onCancelSegmentation}>Cancel</button>
             </div>
             <div className="control-row">

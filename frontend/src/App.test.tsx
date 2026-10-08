@@ -12,7 +12,8 @@ vi.mock("./components/PdfOverlayPanel", () => ({
 vi.mock("./components/CameraPanel", () => ({
   CameraPanel: ({ onAddPoint }: { onAddPoint: (p: PromptPoint) => void }) => (
     <div>
-      <button onClick={() => onAddPoint({ x: 10, y: 10, label: 1 })}>Add Prompt</button>
+      <button onClick={() => onAddPoint({ x: 10, y: 10, label: 1 })}>Add Positive</button>
+      <button onClick={() => onAddPoint({ x: 3, y: 3, label: 0 })}>Add Negative</button>
     </div>
   ),
 }));
@@ -28,7 +29,7 @@ const apiMock = vi.hoisted(() => {
     getHealth: vi.fn().mockResolvedValue({ gpu: { device_name: "GPU", capability: "8.9", model_loaded: true } }),
     getCameraStatus: vi.fn().mockResolvedValue({ camera_available: false, camera_name: "TEST", mode: "test" }),
     capture: vi.fn().mockImplementation(async () => captureCalls.shift() ?? { capture_id: "cap-x", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" }),
-    prepareEmbedding: vi.fn().mockResolvedValue(undefined),
+    prepareEmbedding: vi.fn().mockResolvedValue({ ok: true, prepare_ms: 12 }),
     predictMask: vi.fn().mockResolvedValue({ request_id: 1, scores: [0.95], best_index: 0, masks: ["ff"] }),
     acceptMask: vi.fn().mockResolvedValue({
       mask_png_hex: "aa",
@@ -75,7 +76,7 @@ function pdfFile(name: string): File {
 async function createSample(): Promise<void> {
   fireEvent.click(screen.getByRole("button", { name: "Capture" }));
   await waitFor(() => expect(apiMock.capture).toHaveBeenCalled());
-  fireEvent.click(screen.getByRole("button", { name: "Add Prompt" }));
+  fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
   await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalled());
   fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
   await waitFor(() => expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument());
@@ -124,7 +125,7 @@ describe("App reliability regression", () => {
     await waitFor(() => expect(apiMock.registerCaptureFile).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
-    fireEvent.click(screen.getByRole("button", { name: "Add Prompt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
     await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
 
@@ -149,7 +150,7 @@ describe("App reliability regression", () => {
     fireEvent.click(screen.getByRole("button", { name: "Redo Segmentation" }));
     await waitFor(() => expect(apiMock.registerCaptureFile).toHaveBeenCalled());
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Prompt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
     await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
 
@@ -158,5 +159,40 @@ describe("App reliability regression", () => {
 
     const secondPayload = apiMock.saveProject.mock.calls[1][1] as { samples: Array<{ transform: { color: string } }> };
     expect(secondPayload.samples[0].transform.color).toBe(colorBefore);
+  });
+
+  it("refines prediction with positive and negative points", async () => {
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => expect(apiMock.capture).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
+    await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Negative" }));
+    await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalledTimes(2));
+
+    const lastCall = apiMock.predictMask.mock.calls.at(-1) as [string, PromptPoint[], number];
+    expect(lastCall[1]).toEqual([
+      { x: 10, y: 10, label: 1 },
+      { x: 3, y: 3, label: 0 },
+    ]);
+  });
+
+  it("disables accept while latest prediction is pending", async () => {
+    apiMock.predictMask.mockImplementation(
+      () => new Promise((resolve) => setTimeout(() => resolve({ request_id: 1, scores: [0.95], best_index: 0, masks: ["ff"] }), 40))
+    );
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => expect(apiMock.capture).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
+
+    const acceptBtn = screen.getByRole("button", { name: "Accept Mask" });
+    expect(acceptBtn).toBeDisabled();
+
+    await waitFor(() => expect(acceptBtn).not.toBeDisabled());
   });
 });

@@ -32,6 +32,7 @@ export function CameraPanel({
   const [dragging, setDragging] = useState(false);
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
   const [loadErr, setLoadErr] = useState<string>("");
+  const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
@@ -44,6 +45,28 @@ export function CameraPanel({
     return () => window.clearInterval(id);
   }, [frozenImageHex]);
 
+  useEffect(() => {
+    if (!wrapperRef.current) {
+      return;
+    }
+    const updateSize = () => {
+      const rect = wrapperRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return;
+      }
+      setCanvasSize({ width: rect.width, height: rect.height });
+    };
+    updateSize();
+
+    const obs = typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => updateSize()) : null;
+    obs?.observe(wrapperRef.current);
+    window.addEventListener("resize", updateSize);
+    return () => {
+      obs?.disconnect();
+      window.removeEventListener("resize", updateSize);
+    };
+  }, []);
+
   const imageUrl = useMemo(() => {
     if (frozenImageHex) {
       return hexPngToDataUrl(frozenImageHex);
@@ -52,6 +75,18 @@ export function CameraPanel({
   }, [frozenImageHex, liveSrc]);
 
   const maskUrl = useMemo(() => hexPngToDataUrl(maskHex), [maskHex]);
+
+  function imageLayout() {
+    if (!frozenSize || canvasSize.width <= 0 || canvasSize.height <= 0) {
+      return null;
+    }
+    const baseScale = Math.min(canvasSize.width / frozenSize.width, canvasSize.height / frozenSize.height);
+    const drawW = frozenSize.width * baseScale * zoom;
+    const drawH = frozenSize.height * baseScale * zoom;
+    const offX = (canvasSize.width - drawW) * 0.5 + pan.x;
+    const offY = (canvasSize.height - drawH) * 0.5 + pan.y;
+    return { baseScale, drawW, drawH, offX, offY };
+  }
 
   function mapEventToImage(ev: React.MouseEvent<HTMLDivElement, MouseEvent>): { x: number; y: number } | null {
     if (!wrapperRef.current || !frozenSize) {
@@ -62,15 +97,13 @@ export function CameraPanel({
     const cx = ev.clientX - rect.left;
     const cy = ev.clientY - rect.top;
 
-    const baseScale = Math.min(rect.width / frozenSize.width, rect.height / frozenSize.height);
-    const drawW = frozenSize.width * baseScale * zoom;
-    const drawH = frozenSize.height * baseScale * zoom;
+    const layout = imageLayout();
+    if (!layout) {
+      return null;
+    }
 
-    const offX = (rect.width - drawW) * 0.5 + pan.x;
-    const offY = (rect.height - drawH) * 0.5 + pan.y;
-
-    const imgX = (cx - offX) / (baseScale * zoom);
-    const imgY = (cy - offY) / (baseScale * zoom);
+    const imgX = (cx - layout.offX) / (layout.baseScale * zoom);
+    const imgY = (cy - layout.offY) / (layout.baseScale * zoom);
 
     if (imgX < 0 || imgY < 0 || imgX >= frozenSize.width || imgY >= frozenSize.height) {
       return null;
@@ -136,14 +169,12 @@ export function CameraPanel({
     if (!wrapperRef.current || !frozenSize) {
       return null;
     }
-    const rect = wrapperRef.current.getBoundingClientRect();
-    const baseScale = Math.min(rect.width / frozenSize.width, rect.height / frozenSize.height);
-    const drawW = frozenSize.width * baseScale * zoom;
-    const drawH = frozenSize.height * baseScale * zoom;
-    const offX = (rect.width - drawW) * 0.5 + pan.x;
-    const offY = (rect.height - drawH) * 0.5 + pan.y;
-    const sx = offX + p.x * baseScale * zoom;
-    const sy = offY + p.y * baseScale * zoom;
+    const layout = imageLayout();
+    if (!layout) {
+      return null;
+    }
+    const sx = layout.offX + p.x * layout.baseScale * zoom;
+    const sy = layout.offY + p.y * layout.baseScale * zoom;
     return (
       <div
         key={`${p.x}-${p.y}-${i}`}

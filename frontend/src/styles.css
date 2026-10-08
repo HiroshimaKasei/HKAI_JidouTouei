@@ -160,8 +160,8 @@ button:hover {
 }
 
 .mask-overlay {
-  opacity: 0.38;
-  mix-blend-mode: multiply;
+  opacity: 1;
+  mix-blend-mode: normal;
 }
 
 .prompt-point {

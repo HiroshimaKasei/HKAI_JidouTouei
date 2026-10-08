@@ -247,6 +247,9 @@ class CameraService:
         resized = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
         return resized
 
+    def get_live_frame(self, max_width: int = 1280) -> np.ndarray:
+        return self.get_live_preview_frame(max_width=max_width)
+
     def capture(self) -> CaptureFrame:
         frame = self._current_native_frame()
         mode = "test" if self._test_mode_image is not None else "camera"
