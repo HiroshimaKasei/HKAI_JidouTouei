@@ -39,6 +39,10 @@ function sampleFileUrl(projectId: string, sampleId: string, fileName: string): s
   return `http://127.0.0.1:8000/api/project/${projectId}/samples/${sampleId}/${fileName}`;
 }
 
+function makeProjectId(): string {
+  return `project_${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
+}
+
 export function App() {
   const [statusText, setStatusText] = useState("Initializing");
   const [cameraStatus, setCameraStatus] = useState<CameraStatus | null>(null);
@@ -69,7 +73,9 @@ export function App() {
   const predictTokenRef = useRef(0);
   const activePredictTokenRef = useRef(0);
 
-  const projectIdRef = useRef(`project_${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`);
+  const [isDirty, setIsDirty] = useState(false);
+
+  const projectIdRef = useRef(makeProjectId());
 
   useEffect(() => {
     (async () => {
@@ -98,6 +104,25 @@ export function App() {
     if (clearMask) {
       setMaskPreviewHex("");
     }
+  }
+
+  function resetActiveSegmentation() {
+    setCaptureId(null);
+    setFrozenImageHex("");
+    setFrozenSize(null);
+    setSegReady(false);
+    setPrompts([]);
+    requestCounterRef.current = 0;
+    latestAcceptedRequestIdRef.current = 0;
+    invalidatePredictions();
+    setReplaceSampleId(null);
+  }
+
+  function confirmDiscardIfDirty(action: string): boolean {
+    if (!isDirty) {
+      return true;
+    }
+    return window.confirm(`Discard unsaved work and ${action}?`);
   }
 
   useEffect(() => {
@@ -150,10 +175,21 @@ export function App() {
     if (!file) {
       return;
     }
+    if (!confirmDiscardIfDirty("start a new inspection")) {
+      ev.currentTarget.value = "";
+      return;
+    }
+    projectIdRef.current = makeProjectId();
+    resetActiveSegmentation();
+    setSamples([]);
+    setSelectedSampleId(null);
+    setOverlayScale(1);
+    setStatusText(`Loaded PDF: ${file.name} (new inspection)`);
+    setIsDirty(false);
     setPdfFile(file);
     setPdfSource(file);
     setSelectedPage(1);
-    setStatusText(`Loaded PDF: ${file.name}`);
+    ev.currentTarget.value = "";
   }
 
   async function onCapture() {
@@ -164,9 +200,11 @@ export function App() {
       setFrozenSize({ width: cap.width, height: cap.height });
       setFrozenImageHex(cap.capture_png_hex);
       setPrompts([]);
+      setReplaceSampleId(null);
       requestCounterRef.current = 0;
       latestAcceptedRequestIdRef.current = 0;
       invalidatePredictions();
+      setIsDirty(true);
 
       await prepareEmbedding(cap.capture_id);
       setSegReady(true);
@@ -178,16 +216,19 @@ export function App() {
 
   function onAddPrompt(p: PromptPoint) {
     setPrompts((prev) => [...prev, p]);
+    setIsDirty(true);
   }
 
   function onUndoPrompt() {
     setPrompts((prev) => prev.slice(0, -1));
     invalidatePredictions();
+    setIsDirty(true);
   }
 
   function onResetPrompts() {
     setPrompts([]);
     invalidatePredictions();
+    setIsDirty(true);
   }
 
   function onRedoSegmentation() {
@@ -210,9 +251,10 @@ export function App() {
 
     try {
       const resp = await acceptMask(captureId, latestAcceptedRequestIdRef.current, selectedCandidateIndex);
-      const replacementTarget = samples.find((s) => s.sampleId === replaceSampleId);
+      const replacementId = replaceSampleId;
+      const replacementTarget = replacementId ? samples.find((s) => s.sampleId === replacementId) : undefined;
       const inherit = samples.length > 0 ? samples[samples.length - 1].transform : null;
-      const nextId = replaceSampleId ?? nextSampleId(samples);
+      const nextId = replacementTarget ? replacementTarget.sampleId : nextSampleId(samples);
 
       const sample: SampleData = {
         sampleId: nextId,
@@ -226,7 +268,13 @@ export function App() {
         transform: replacementTarget
           ? replacementTarget.transform
           : inherit
-            ? { ...inherit }
+            ? {
+                tx: inherit.tx,
+                ty: inherit.ty,
+                rotationDeg: inherit.rotationDeg,
+                visible: true,
+                color: sampleColor(samples.length),
+              }
             : {
                 tx: 0,
                 ty: 0,
@@ -239,19 +287,23 @@ export function App() {
         contourBwPngHex: resp.contour_bw_png_hex,
       };
 
-      if (replaceSampleId) {
-        const ok = window.confirm(`Replace sample ${replaceSampleId} mask with current segmentation?`);
+      if (replacementTarget) {
+        const ok = window.confirm(`Replace sample ${replacementTarget.sampleId} mask with current segmentation?`);
         if (!ok) {
           setStatusText("Replace cancelled");
           return;
         }
-        setSamples((prev) => prev.map((s) => (s.sampleId === replaceSampleId ? sample : s)));
+        setSamples((prev) => prev.map((s) => (s.sampleId === replacementTarget.sampleId ? sample : s)));
         setReplaceSampleId(null);
       } else {
+        if (replacementId) {
+          setReplaceSampleId(null);
+        }
         setSamples((prev) => [...prev, sample]);
       }
 
       setSelectedSampleId(sample.sampleId);
+      setIsDirty(true);
       setStatusText(`Accepted mask as Sample ${sample.sampleId}`);
       onRedoSegmentation();
     } catch (err) {
@@ -261,6 +313,7 @@ export function App() {
 
   function updateSample(sampleId: string, patch: Partial<SampleData["transform"]>) {
     setSamples((prev) => prev.map((s) => (s.sampleId === sampleId ? { ...s, transform: { ...s.transform, ...patch } } : s)));
+    setIsDirty(true);
   }
 
   function deleteSample(sampleId: string) {
@@ -268,6 +321,7 @@ export function App() {
     if (selectedSampleId === sampleId) {
       setSelectedSampleId(null);
     }
+    setIsDirty(true);
   }
 
   async function redoSelectedSample() {
@@ -310,6 +364,16 @@ export function App() {
     }
   }
 
+  function onCancelSegmentation() {
+    const hadReplaceTarget = Boolean(replaceSampleId);
+    resetActiveSegmentation();
+    if (hadReplaceTarget) {
+      setStatusText("Redo replacement cancelled; original sample kept");
+      return;
+    }
+    setStatusText("Capture/segmentation cancelled");
+  }
+
   async function onSaveProject() {
     try {
       await saveProject(
@@ -334,6 +398,7 @@ export function App() {
         }))
       );
       setStatusText(`Project saved: ${projectIdRef.current}`);
+      setIsDirty(false);
     } catch (err) {
       setStatusText(`Save failed: ${(err as Error).message}`);
     }
@@ -341,6 +406,9 @@ export function App() {
 
   async function onLoadProject() {
     try {
+      if (!confirmDiscardIfDirty("load another project")) {
+        return;
+      }
       const projects = await listProjects();
       if (projects.length === 0) {
         setStatusText("No saved projects");
@@ -351,6 +419,7 @@ export function App() {
         return;
       }
       const proj = await loadProject(pick);
+      resetActiveSegmentation();
       projectIdRef.current = proj.project_id;
       setSelectedPage(proj.selected_page);
       setOverlayScale(proj.overlay_scale);
@@ -384,6 +453,7 @@ export function App() {
       });
       setSamples(loadedSamples);
       setSelectedSampleId(loadedSamples[0]?.sampleId ?? null);
+      setIsDirty(false);
       setStatusText(`Loaded project ${pick}`);
     } catch (err) {
       setStatusText(`Load failed: ${(err as Error).message}`);
@@ -435,7 +505,7 @@ export function App() {
             </div>
             <div className="control-row">
               <button onClick={onAcceptMask} disabled={!hasSegCandidates || isPredicting}>Accept Mask</button>
-              <button onClick={() => setReplaceSampleId(null)}>Cancel</button>
+              <button onClick={onCancelSegmentation}>Cancel</button>
             </div>
             <div className="control-row">
               <label>Candidate</label>

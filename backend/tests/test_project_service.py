@@ -2,9 +2,7 @@ from app.services.project_service import ProjectService
 
 
 def test_save_and_load_json_roundtrip(tmp_path, monkeypatch):
-    from app import config
-
-    monkeypatch.setattr(config, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr("app.services.project_service.PROJECTS_DIR", tmp_path)
     svc = ProjectService()
 
     payload = {
@@ -23,9 +21,7 @@ def test_save_and_load_json_roundtrip(tmp_path, monkeypatch):
 
 
 def test_rejects_invalid_project_id(tmp_path, monkeypatch):
-    from app import config
-
-    monkeypatch.setattr(config, "PROJECTS_DIR", tmp_path)
+    monkeypatch.setattr("app.services.project_service.PROJECTS_DIR", tmp_path)
     svc = ProjectService()
 
     try:
