@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
 import uuid
 import tempfile
 from pathlib import Path
 
+from app.routers._operator_guard import require_operator_lock
 from app.schemas.models import AcceptMaskRequest, PrepareEmbeddingRequest, PredictRequest, RegisterCaptureImageRequest
 from app.state import contour_service, sam_service
 
@@ -16,6 +17,7 @@ router = APIRouter(prefix="/api/sam", tags=["sam"])
 
 @router.post("/register-image")
 async def register_image(
+    _token: str = Depends(require_operator_lock),
     file: UploadFile | None = File(None),
     image_png_hex: str | None = Form(None),
     req: RegisterCaptureImageRequest | None = Body(None),
@@ -47,7 +49,7 @@ async def register_image(
 
 
 @router.post("/prepare")
-def prepare(req: PrepareEmbeddingRequest) -> dict[str, object]:
+def prepare(req: PrepareEmbeddingRequest, _token: str = Depends(require_operator_lock)) -> dict[str, object]:
     try:
         sam_service.prepare_embedding(req.capture_id)
     except FileNotFoundError as exc:
@@ -65,7 +67,7 @@ def prepare(req: PrepareEmbeddingRequest) -> dict[str, object]:
 
 
 @router.post("/predict")
-def predict(req: PredictRequest) -> dict[str, object]:
+def predict(req: PredictRequest, _token: str = Depends(require_operator_lock)) -> dict[str, object]:
     pos_count = sum(1 for p in req.points if p.label == 1)
     if pos_count == 0:
         return {"request_id": req.request_id, "scores": [], "best_index": -1, "masks": []}
@@ -84,7 +86,7 @@ def predict(req: PredictRequest) -> dict[str, object]:
 
 
 @router.post("/accept")
-def accept(req: AcceptMaskRequest) -> JSONResponse:
+def accept(req: AcceptMaskRequest, _token: str = Depends(require_operator_lock)) -> JSONResponse:
     try:
         mask = sam_service.get_candidate_mask(req.capture_id, req.request_id, req.candidate_index)
     except (KeyError, ValueError, IndexError) as exc:

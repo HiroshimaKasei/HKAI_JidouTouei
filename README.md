@@ -4,7 +4,7 @@ MVP implementation for local factory-side PDF overlay alignment using camera cap
 
 ## Scope implemented
 
-- Local-only architecture: FastAPI backend + React/TypeScript frontend on 127.0.0.1.
+- Local/LAN architecture: FastAPI backend serves API and production frontend from one Windows PC.
 - PDF viewing (PDF.js via react-pdf): page selection, pan, zoom.
 - Camera panel with live preview polling, capture freeze, and explicit TEST MODE image upload.
 - Interactive click prompting for SAM (positive/negative points), undo/reset/redo prompt flow, candidate selection, accept mask.
@@ -12,6 +12,7 @@ MVP implementation for local factory-side PDF overlay alignment using camera cap
 - Overlay samples on PDF with independent per-sample translate/rotate/visibility/color.
 - Multiple samples per PDF page.
 - Project save/load to local folders with editable state.
+- Single active operator session lock for mutating inspection actions.
 
 ## Repository structure
 
@@ -66,23 +67,64 @@ $env:SAM_DEVICE="cpu"
 $env:SAM_DEVICE="cuda"
 ```
 
-5. Run backend and frontend:
+5. Development mode (localhost):
 
 ```powershell
 start.bat
 ```
 
+6. Production LAN mode (single server on main PC):
+
+```powershell
+start_lan.bat
+```
+
+Notes:
+
+- `start_lan.bat` installs dependencies, builds the Vite frontend, and starts one FastAPI server bound to `0.0.0.0`.
+- Startup prints local and detected LAN URL(s), for example `http://192.168.x.x:8000`.
+- Client PCs only need a browser. They do not need Python, Node.js, or camera drivers.
+- All project files remain stored on the main server PC under `data/projects/`.
+
 Or manually:
 
 ```powershell
 cd backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+python run_server.py
 ```
 
 ```powershell
 cd frontend
 npm run dev
 ```
+
+Environment variables used by LAN mode:
+
+- `HKAI_HOST` (default `0.0.0.0`)
+- `HKAI_PORT` (default `8000`)
+- `HKAI_TRUSTED_LAN_CIDRS` (default private ranges + loopback)
+- `HKAI_OPERATOR_LOCK_TTL_SECONDS` (default `300`)
+
+## LAN security and firewall
+
+- The server rejects requests whose client IP is outside `HKAI_TRUSTED_LAN_CIDRS`.
+- CORS remains restricted to local dev origins (`127.0.0.1:5173`, `localhost:5173`) and is not wildcard.
+- For LAN use, do not expose this host/port to the public internet.
+
+Recommended Windows Firewall inbound rule (main server PC):
+
+1. Open `Windows Defender Firewall with Advanced Security`.
+2. Create a new `Inbound Rule` for `TCP` port `8000` (or your `HKAI_PORT`).
+3. Set `Action` to `Allow the connection`.
+4. Apply only to `Domain` profile (and `Private` if needed).
+5. In `Scope`, set `Remote IP address` to `These IP addresses` and add only your company subnet(s), for example `192.168.10.0/24`.
+6. Do not enable the rule for `Public` profile.
+
+## Multi-user safety
+
+- Only one active inspection operator token is allowed at a time.
+- Mutating operations (`capture`, `SAM prepare/predict/accept`, project save, test-image updates) require that token.
+- Other browser sessions can view data but cannot overwrite active inspection state until the lock expires or is released.
 
 ## SAM runtime policy and verification
 
@@ -104,6 +146,10 @@ For RTX 5070 target workflow, use a CUDA/PyTorch build that supports Blackwell a
 ## API summary
 
 - GET /api/health/
+- GET /api/session/status
+- POST /api/session/claim
+- POST /api/session/heartbeat
+- POST /api/session/release
 - GET /api/camera/status
 - GET /api/camera/frame
 - POST /api/camera/test-image
@@ -167,5 +213,5 @@ Covered:
 - OK/NG inspection
 - cloud storage
 - database server
-- multi-user networking
+- concurrent multi-operator editing
 - non-SAM segmentation models

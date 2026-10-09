@@ -26,6 +26,8 @@ const apiMock = vi.hoisted(() => {
   ];
 
   return {
+    ensureOperatorSession: vi.fn().mockResolvedValue(undefined),
+    releaseOperatorSession: vi.fn().mockResolvedValue(undefined),
     getHealth: vi.fn().mockResolvedValue({ gpu: { device_name: "GPU", capability: "8.9", model_loaded: true } }),
     getCameraStatus: vi.fn().mockResolvedValue({ camera_available: false, camera_name: "TEST", mode: "test" }),
     capture: vi.fn().mockImplementation(async () => captureCalls.shift() ?? { capture_id: "cap-x", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" }),
@@ -63,6 +65,7 @@ const apiMock = vi.hoisted(() => {
         },
       ],
     }),
+    resolveApiPath: vi.fn((u: string) => u),
     resolvePdfUrl: vi.fn((u: string) => u),
   };
 });

@@ -1,6 +1,112 @@
 import type { CameraStatus, PromptPoint, SampleData } from "./types/models";
 
-const BASE = "http://127.0.0.1:8000";
+const BASE = (import.meta.env.VITE_API_BASE ?? (import.meta.env.DEV ? "http://127.0.0.1:8000" : "")).replace(/\/+$/, "");
+const OPERATOR_TOKEN_HEADER = "X-Operator-Token";
+
+let operatorToken = "";
+let heartbeatHandle: number | null = null;
+
+function apiUrl(path: string): string {
+  return `${BASE}${path}`;
+}
+
+function withOperatorToken(headers?: HeadersInit): Headers {
+  const out = new Headers(headers ?? {});
+  if (operatorToken) {
+    out.set(OPERATOR_TOKEN_HEADER, operatorToken);
+  }
+  return out;
+}
+
+async function operatorPost(path: string, init?: RequestInit): Promise<Response> {
+  await ensureOperatorSession();
+  return fetch(apiUrl(path), {
+    ...init,
+    headers: withOperatorToken(init?.headers),
+  });
+}
+
+function startHeartbeat(): void {
+  if (heartbeatHandle !== null || !operatorToken || typeof window === "undefined") {
+    return;
+  }
+  heartbeatHandle = window.setInterval(() => {
+    void heartbeatOperatorSession();
+  }, 20000);
+}
+
+function stopHeartbeat(): void {
+  if (heartbeatHandle !== null && typeof window !== "undefined") {
+    window.clearInterval(heartbeatHandle);
+  }
+  heartbeatHandle = null;
+}
+
+export async function claimOperatorSession(operatorName = "operator"): Promise<{
+  granted: boolean;
+  token: string;
+  active: { locked: boolean; operator_name: string; client_ip: string; expires_in_seconds: number };
+}> {
+  const res = await fetch(apiUrl("/api/session/claim"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ operator_name: operatorName }),
+  });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  const body = (await res.json()) as {
+    granted: boolean;
+    token: string;
+    active: { locked: boolean; operator_name: string; client_ip: string; expires_in_seconds: number };
+  };
+  if (body.granted && body.token) {
+    operatorToken = body.token;
+    startHeartbeat();
+  }
+  return body;
+}
+
+export async function ensureOperatorSession(): Promise<void> {
+  if (operatorToken) {
+    return;
+  }
+  const claim = await claimOperatorSession();
+  if (!claim.granted || !claim.token) {
+    throw new Error(`Inspection is currently controlled by another operator (${claim.active.client_ip || "unknown"}).`);
+  }
+}
+
+export async function heartbeatOperatorSession(): Promise<void> {
+  if (!operatorToken) {
+    return;
+  }
+  const res = await fetch(apiUrl("/api/session/heartbeat"), {
+    method: "POST",
+    headers: withOperatorToken(),
+  });
+  if (!res.ok) {
+    return;
+  }
+  const body = (await res.json()) as { ok: boolean };
+  if (!body.ok) {
+    operatorToken = "";
+    stopHeartbeat();
+  }
+}
+
+export async function releaseOperatorSession(): Promise<void> {
+  if (!operatorToken) {
+    return;
+  }
+  await fetch(apiUrl("/api/session/release"), {
+    method: "POST",
+    headers: withOperatorToken(),
+    keepalive: true,
+  });
+  operatorToken = "";
+  stopHeartbeat();
+}
 
 function hexToBlob(hex: string, type: string): Blob {
   const bytes = Uint8Array.from((hex.match(/.{1,2}/g) ?? []).map((x) => parseInt(x, 16)));
@@ -36,7 +142,7 @@ export async function fetchFileAsFile(url: string, fallbackName: string): Promis
 }
 
 export async function getHealth(): Promise<unknown> {
-  const res = await fetch(`${BASE}/api/health/`);
+  const res = await fetch(apiUrl("/api/health/"));
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -44,7 +150,7 @@ export async function getHealth(): Promise<unknown> {
 }
 
 export async function getCameraStatus(): Promise<CameraStatus> {
-  const res = await fetch(`${BASE}/api/camera/status`);
+  const res = await fetch(apiUrl("/api/camera/status"));
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -52,13 +158,13 @@ export async function getCameraStatus(): Promise<CameraStatus> {
 }
 
 export function frameUrl(): string {
-  return `${BASE}/api/camera/frame?ts=${Date.now()}`;
+  return apiUrl(`/api/camera/frame?ts=${Date.now()}`);
 }
 
 export async function uploadTestImage(file: File): Promise<CameraStatus> {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${BASE}/api/camera/test-image`, { method: "POST", body: fd });
+  const res = await operatorPost("/api/camera/test-image", { method: "POST", body: fd });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -66,7 +172,7 @@ export async function uploadTestImage(file: File): Promise<CameraStatus> {
 }
 
 export async function capture(): Promise<{ capture_id: string; width: number; height: number; mode: string; capture_png_hex: string }> {
-  const res = await fetch(`${BASE}/api/camera/capture`, { method: "POST" });
+  const res = await operatorPost("/api/camera/capture", { method: "POST" });
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -74,7 +180,7 @@ export async function capture(): Promise<{ capture_id: string; width: number; he
 }
 
 export async function prepareEmbedding(captureId: string): Promise<{ ok: boolean; state?: string; prepare_ms?: number }> {
-  const res = await fetch(`${BASE}/api/sam/prepare`, {
+  const res = await operatorPost("/api/sam/prepare", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ capture_id: captureId }),
@@ -90,7 +196,7 @@ export async function predictMask(
   points: PromptPoint[],
   requestId: number
 ): Promise<{ request_id: number; scores: number[]; best_index: number; masks: string[] }> {
-  const res = await fetch(`${BASE}/api/sam/predict`, {
+  const res = await operatorPost("/api/sam/predict", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -116,7 +222,7 @@ export async function acceptMask(
   outer_contours: number[][][];
   hole_contours: number[][][];
 }> {
-  const res = await fetch(`${BASE}/api/sam/accept`, {
+  const res = await operatorPost("/api/sam/accept", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ capture_id: captureId, request_id: requestId, candidate_index: candidateIndex }),
@@ -135,7 +241,7 @@ export async function registerCaptureImage(imagePngHex: string): Promise<{ captu
 export async function registerCaptureFile(file: File): Promise<{ capture_id: string; width: number; height: number }> {
   const fd = new FormData();
   fd.append("file", file);
-  const res = await fetch(`${BASE}/api/sam/register-image`, {
+  const res = await operatorPost("/api/sam/register-image", {
     method: "POST",
     body: fd,
   });
@@ -222,14 +328,14 @@ export async function saveProject(
   if (sourcePdf) {
     fd.append("source_pdf", sourcePdf);
   }
-  const res = await fetch(`${BASE}/api/project/save`, { method: "POST", body: fd });
+  const res = await operatorPost("/api/project/save", { method: "POST", body: fd });
   if (!res.ok) {
     throw new Error(await res.text());
   }
 }
 
 export async function listProjects(): Promise<string[]> {
-  const res = await fetch(`${BASE}/api/project/list`);
+  const res = await fetch(apiUrl("/api/project/list"));
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -255,7 +361,7 @@ export async function loadProject(projectId: string): Promise<{
     transform: { tx: number; ty: number; rotation_deg: number; visible: boolean; color: string };
   }>;
 }> {
-  const res = await fetch(`${BASE}/api/project/load/${projectId}`);
+  const res = await fetch(apiUrl(`/api/project/load/${projectId}`));
   if (!res.ok) {
     throw new Error(await res.text());
   }
@@ -266,5 +372,9 @@ export function resolvePdfUrl(path: string): string {
   if (path.startsWith("http://") || path.startsWith("https://")) {
     return path;
   }
-  return `${BASE}${path}`;
+  return apiUrl(path.startsWith("/") ? path : `/${path}`);
+}
+
+export function resolveApiPath(path: string): string {
+  return apiUrl(path.startsWith("/") ? path : `/${path}`);
 }

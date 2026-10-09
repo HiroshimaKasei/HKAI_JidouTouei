@@ -4,10 +4,11 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
+from app.routers._operator_guard import require_operator_lock
 from app.schemas.models import LoadProjectResponse, SaveProjectPayload
 from app.state import contour_service, project_service
 
@@ -33,6 +34,7 @@ def _normalize_payload(payload: dict) -> dict:
 
 @router.post("/save")
 async def save_project(
+    _token: str = Depends(require_operator_lock),
     project_id: str = Form(...),
     payload_json: str = Form(...),
     source_pdf: UploadFile | None = File(None),

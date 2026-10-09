@@ -63,6 +63,10 @@ def test_save_load_repeated_preserves_multi_sample_and_dxf(tmp_path: Path, monke
     monkeypatch.setattr("app.state.project_service", svc)
 
     client = TestClient(app)
+    claim = client.post("/api/session/claim", json={"operator_name": "pytest"})
+    assert claim.status_code == 200
+    token = claim.json()["token"]
+    headers = {"X-Operator-Token": token}
 
     files = [
         ("source_pdf", ("source.pdf", b"%PDF-1.4\n%mock", "application/pdf")),
@@ -77,6 +81,7 @@ def test_save_load_repeated_preserves_multi_sample_and_dxf(tmp_path: Path, monke
     payload = _save_payload(selected_page=1)
     resp = client.post(
         "/api/project/save",
+        headers=headers,
         data={"project_id": "projA", "payload_json": json.dumps(payload)},
         files=files,
     )
@@ -98,6 +103,7 @@ def test_save_load_repeated_preserves_multi_sample_and_dxf(tmp_path: Path, monke
     payload2["overlay_scale"] = 1.25
     resp2 = client.post(
         "/api/project/save",
+        headers=headers,
         data={"project_id": "projA", "payload_json": json.dumps(payload2)},
         files=[("source_pdf", ("source.pdf", b"%PDF-1.4\n%updated", "application/pdf"))],
     )

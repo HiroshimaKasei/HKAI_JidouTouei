@@ -67,9 +67,14 @@ def test_register_prepare_predict_accept_flow(monkeypatch) -> None:
     monkeypatch.setattr(sam_router, "sam_service", fake)
 
     client = TestClient(app)
+    claim = client.post("/api/session/claim", json={"operator_name": "pytest"})
+    assert claim.status_code == 200
+    token = claim.json()["token"]
+    headers = {"X-Operator-Token": token}
 
     reg = client.post(
         "/api/sam/register-image",
+        headers=headers,
         files={"file": ("capture.png", _png_bytes(), "image/png")},
     )
     assert reg.status_code == 200
@@ -78,12 +83,13 @@ def test_register_prepare_predict_accept_flow(monkeypatch) -> None:
     assert body["width"] == 32
     assert body["height"] == 32
 
-    prep = client.post("/api/sam/prepare", json={"capture_id": capture_id})
+    prep = client.post("/api/sam/prepare", headers=headers, json={"capture_id": capture_id})
     assert prep.status_code == 200
     assert prep.json()["ok"] is True
 
     pred = client.post(
         "/api/sam/predict",
+        headers=headers,
         json={
             "capture_id": capture_id,
             "request_id": 11,
@@ -102,6 +108,7 @@ def test_register_prepare_predict_accept_flow(monkeypatch) -> None:
 
     accepted = client.post(
         "/api/sam/accept",
+        headers=headers,
         json={"capture_id": capture_id, "request_id": 11, "candidate_index": 0},
     )
     assert accepted.status_code == 200

@@ -4,9 +4,10 @@ from pathlib import Path
 import tempfile
 
 import cv2
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, Response
 
+from app.routers._operator_guard import require_operator_lock
 from app.state import camera_service, sam_service
 
 router = APIRouter(prefix="/api/camera", tags=["camera"])
@@ -30,7 +31,7 @@ def frame() -> Response:
 
 
 @router.post("/test-image")
-async def upload_test_image(file: UploadFile = File(...)) -> dict[str, object]:
+async def upload_test_image(_token: str = Depends(require_operator_lock), file: UploadFile = File(...)) -> dict[str, object]:
     if not file.filename:
         raise HTTPException(status_code=400, detail="Missing filename")
     suffix = Path(file.filename).suffix.lower()
@@ -47,7 +48,7 @@ async def upload_test_image(file: UploadFile = File(...)) -> dict[str, object]:
 
 
 @router.post("/capture")
-def capture() -> JSONResponse:
+def capture(_token: str = Depends(require_operator_lock)) -> JSONResponse:
     try:
         cap = camera_service.capture()
     except RuntimeError as exc:
@@ -69,6 +70,6 @@ def capture() -> JSONResponse:
 
 
 @router.post("/test-image/clear")
-def clear_test_image() -> dict[str, object]:
+def clear_test_image(_token: str = Depends(require_operator_lock)) -> dict[str, object]:
     camera_service.clear_test_mode()
     return camera_service.status()

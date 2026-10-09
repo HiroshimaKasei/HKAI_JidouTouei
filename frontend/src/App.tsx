@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptMask,
   capture,
+  ensureOperatorSession,
   fetchFileAsFile,
   fileToHex,
   getCameraStatus,
@@ -12,6 +13,8 @@ import {
   prepareEmbedding,
   predictMask,
   registerCaptureFile,
+  releaseOperatorSession,
+  resolveApiPath,
   resolvePdfUrl,
   saveProject,
 } from "./api";
@@ -36,7 +39,7 @@ function nextSampleId(samples: SampleData[]): string {
 }
 
 function sampleFileUrl(projectId: string, sampleId: string, fileName: string): string {
-  return `http://127.0.0.1:8000/api/project/${projectId}/samples/${sampleId}/${fileName}`;
+  return resolveApiPath(`/api/project/${projectId}/samples/${sampleId}/${fileName}`);
 }
 
 function makeProjectId(): string {
@@ -82,6 +85,7 @@ export function App() {
   useEffect(() => {
     (async () => {
       try {
+        await ensureOperatorSession();
         const [health, cam] = await Promise.all([getHealth(), getCameraStatus()]);
         setCameraStatus(cam);
         const sam = (health as {
@@ -128,6 +132,15 @@ export function App() {
         setStatusText(`Startup error: ${(err as Error).message}`);
       }
     })();
+
+    const onBeforeUnload = () => {
+      void releaseOperatorSession();
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      void releaseOperatorSession();
+    };
   }, []);
 
   function invalidatePredictions(clearMask = true) {

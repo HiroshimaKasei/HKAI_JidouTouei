@@ -1,1 +1,1 @@
-{"root":["./src/app.test.tsx","./src/app.tsx","./src/api.ts","./src/main.tsx","./src/components/camerapanel.tsx","./src/components/pdfoverlaypanel.tsx","./src/test/setup.ts","./src/types/models.ts"],"version":"5.9.3"}
+{"root":["./src/app.test.tsx","./src/app.tsx","./src/api.ts","./src/main.tsx","./src/vite-env.d.ts","./src/components/camerapanel.test.tsx","./src/components/camerapanel.tsx","./src/components/pdfoverlaypanel.tsx","./src/test/setup.ts","./src/types/models.ts"],"version":"5.9.3"}
