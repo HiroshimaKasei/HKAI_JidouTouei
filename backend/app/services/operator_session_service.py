@@ -12,6 +12,7 @@ from typing import Any
 class OperatorSession:
     token: str
     client_ip: str
+    client_id: str
     operator_name: str
     acquired_at: float
     last_seen_at: float
@@ -40,16 +41,18 @@ class OperatorSessionService:
         if self._is_expired(self._active, ts):
             self._active = None
 
-    def claim(self, client_ip: str, operator_name: str = "operator") -> dict[str, Any]:
+    def claim(self, client_ip: str, client_id: str = "", operator_name: str = "operator") -> dict[str, Any]:
         with self._lock:
             now_ts = self._now()
             self._expire_if_needed(now_ts)
+            client_id = client_id.strip()
 
             if self._active is None:
                 token = secrets.token_urlsafe(32)
                 self._active = OperatorSession(
                     token=token,
                     client_ip=client_ip,
+                    client_id=client_id,
                     operator_name=operator_name.strip() or "operator",
                     acquired_at=now_ts,
                     last_seen_at=now_ts,
@@ -60,7 +63,8 @@ class OperatorSessionService:
                     "active": self.status(),
                 }
 
-            if self._active.client_ip == client_ip:
+            same_legacy_client = not client_id and not self._active.client_id
+            if self._active.client_ip == client_ip and (same_legacy_client or (client_id and self._active.client_id == client_id)):
                 self._active.last_seen_at = now_ts
                 return {
                     "granted": True,

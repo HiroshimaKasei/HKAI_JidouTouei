@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/session", tags=["session"])
 
 class ClaimRequest(BaseModel):
     operator_name: str = "operator"
+    client_id: str = ""
 
 
 @router.get("/status")
@@ -20,7 +21,11 @@ def session_status() -> dict[str, object]:
 @router.post("/claim")
 def claim_session(req: Request, payload: ClaimRequest) -> dict[str, object]:
     client_ip = req.client.host if req.client else "unknown"
-    return operator_session_service.claim(client_ip=client_ip, operator_name=payload.operator_name)
+    return operator_session_service.claim(
+        client_ip=client_ip,
+        client_id=payload.client_id,
+        operator_name=payload.operator_name,
+    )
 
 
 @router.post("/heartbeat")

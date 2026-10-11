@@ -181,15 +181,25 @@ button:hover {
   background: #c42d2d;
 }
 
-.test-upload {
-  display: block;
+.source-switch {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 10px;
-  font-size: 13px;
 }
 
 .test-upload input {
-  display: block;
-  margin-top: 4px;
+  display: none;
+}
+
+.test-upload {
+  border: 1px solid #8ca4b3;
+  border-radius: 8px;
+  background: #fff;
+  cursor: pointer;
+  padding: 7px 12px;
+  font-size: 14px;
 }
 
 .control-row {

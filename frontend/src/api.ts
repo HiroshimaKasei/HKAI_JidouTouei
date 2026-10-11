@@ -5,6 +5,15 @@ const OPERATOR_TOKEN_HEADER = "X-Operator-Token";
 
 let operatorToken = "";
 let heartbeatHandle: number | null = null;
+const operatorClientId = typeof window === "undefined" ? "" : (() => {
+  const existing = window.sessionStorage.getItem("hkai-operator-client-id");
+  if (existing) {
+    return existing;
+  }
+  const clientId = crypto.randomUUID();
+  window.sessionStorage.setItem("hkai-operator-client-id", clientId);
+  return clientId;
+})();
 
 function apiUrl(path: string): string {
   return `${BASE}${path}`;
@@ -50,7 +59,7 @@ export async function claimOperatorSession(operatorName = "operator"): Promise<{
   const res = await fetch(apiUrl("/api/session/claim"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ operator_name: operatorName }),
+    body: JSON.stringify({ operator_name: operatorName, client_id: operatorClientId }),
   });
   if (!res.ok) {
     throw new Error(await res.text());
@@ -165,6 +174,14 @@ export async function uploadTestImage(file: File): Promise<CameraStatus> {
   const fd = new FormData();
   fd.append("file", file);
   const res = await operatorPost("/api/camera/test-image", { method: "POST", body: fd });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  return res.json();
+}
+
+export async function clearTestImage(): Promise<CameraStatus> {
+  const res = await operatorPost("/api/camera/test-image/clear", { method: "POST" });
   if (!res.ok) {
     throw new Error(await res.text());
   }

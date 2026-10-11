@@ -76,15 +76,21 @@ start.bat
 6. Production LAN mode (single server on main PC):
 
 ```powershell
-start_lan.bat
+prepare_lan.bat
 ```
 
 Notes:
 
-- `start_lan.bat` installs dependencies, builds the Vite frontend, and starts one FastAPI server bound to `0.0.0.0`.
+- Run `prepare_lan.bat` once after installation or updates. It creates the venv, installs dependencies, and builds the production frontend.
+- Run `create_desktop_shortcut.bat` once to create the `HKAI Operator` desktop shortcut. The shortcut runs `launch_operator.bat`, which starts the prepared server only when needed, waits for `/api/health/`, then opens the browser.
+- `stop_operator.bat` stops the launcher-managed server. Logs are in `logs/server.log` and `logs/server-error.log`.
+- `start_lan.bat` remains the compatibility full prepare-and-launch command.
+- The production server is bound to `0.0.0.0` but protected by `HKAI_TRUSTED_LAN_CIDRS`; it is not an internet-facing deployment.
 - Startup prints local and detected LAN URL(s), for example `http://192.168.x.x:8000`.
 - Client PCs only need a browser. They do not need Python, Node.js, or camera drivers.
 - All project files remain stored on the main server PC under `data/projects/`.
+
+For other approved LAN PCs, create a browser shortcut with the detected server URL, for example `http://192.168.10.25:8000`. Do not forward this port on a router or enable a Public-profile firewall rule.
 
 Or manually:
 
@@ -122,9 +128,15 @@ Recommended Windows Firewall inbound rule (main server PC):
 
 ## Multi-user safety
 
-- Only one active inspection operator token is allowed at a time.
+- Opening the page is view-only and does not claim an operator lock. The first mutating action claims the lock.
+- Only one active inspection operator token is allowed at a time; it is bound to an individual browser tab as well as client IP, so another tab on the same factory PC cannot silently take control.
 - Mutating operations (`capture`, `SAM prepare/predict/accept`, project save, test-image updates) require that token.
 - Other browser sessions can view data but cannot overwrite active inspection state until the lock expires or is released.
+
+## Camera Source Switching
+
+- Use `Live Camera` or `Open Image` in the camera panel to choose a source. `Return to Live Preview` clears the uploaded image through `POST /api/camera/test-image/clear` and restarts IC4 acquisition.
+- Switching source confirms before discarding an unfinished frozen capture. It clears prompts, preview masks, capture IDs, and pending prediction results while preserving accepted samples.
 
 ## SAM runtime policy and verification
 
@@ -153,6 +165,7 @@ For RTX 5070 target workflow, use a CUDA/PyTorch build that supports Blackwell a
 - GET /api/camera/status
 - GET /api/camera/frame
 - POST /api/camera/test-image
+- POST /api/camera/test-image/clear
 - POST /api/camera/capture
 - POST /api/sam/register-image
 - POST /api/sam/prepare

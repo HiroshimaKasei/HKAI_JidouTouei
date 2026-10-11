@@ -100,17 +100,21 @@ class CameraService:
             raise RuntimeError("No IC4 camera detected")
 
         grabber = ic4.Grabber()
-        grabber.device_open(device)
+        try:
+            grabber.device_open(device)
 
-        snap_sink = ic4.SnapSink()
-        if hasattr(grabber, "stream_setup"):
-            try:
-                grabber.stream_setup(snap_sink)
-            except TypeError:
-                # Some IC4 builds require setup options; default setup often works with positional args.
-                grabber.stream_setup(snap_sink, None)
-        else:
-            raise RuntimeError("IC4 Grabber.stream_setup is unavailable")
+            snap_sink = ic4.SnapSink()
+            if hasattr(grabber, "stream_setup"):
+                try:
+                    grabber.stream_setup(snap_sink)
+                except TypeError:
+                    # Some IC4 builds require setup options; default setup often works with positional args.
+                    grabber.stream_setup(snap_sink, None)
+            else:
+                raise RuntimeError("IC4 Grabber.stream_setup is unavailable")
+        except Exception:
+            self._dispose_grabber(grabber)
+            raise
 
         name = str(getattr(device, "model_name", "") or getattr(device, "display_name", "") or "IC4 Camera")
 
@@ -121,6 +125,19 @@ class CameraService:
             self._connected = True
             self._last_error = ""
 
+    @staticmethod
+    def _dispose_grabber(grabber: Any) -> None:
+        try:
+            if hasattr(grabber, "stream_stop"):
+                grabber.stream_stop()
+        except Exception:
+            pass
+        try:
+            if hasattr(grabber, "device_close"):
+                grabber.device_close()
+        except Exception:
+            pass
+
     def _close_camera(self) -> None:
         with self._lock:
             grabber = self._grabber
@@ -129,16 +146,7 @@ class CameraService:
             self._connected = False
             self._latest_native_frame = None
         if grabber is not None:
-            try:
-                if hasattr(grabber, "stream_stop"):
-                    grabber.stream_stop()
-            except Exception:
-                pass
-            try:
-                if hasattr(grabber, "device_close"):
-                    grabber.device_close()
-            except Exception:
-                pass
+            self._dispose_grabber(grabber)
 
     def _snap_to_numpy(self, snap) -> np.ndarray | None:
         # Probe common conversion methods across IC4 python releases.
@@ -223,7 +231,7 @@ class CameraService:
         with self._lock:
             self._test_mode_image = img
             self._camera_name = f"TEST MODE: {image_path.name}"
-            self._connected = False
+        self._close_camera()
 
     def clear_test_mode(self) -> None:
         with self._lock:

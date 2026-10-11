@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptMask,
   capture,
-  ensureOperatorSession,
+  clearTestImage,
   fetchFileAsFile,
   fileToHex,
   getCameraStatus,
@@ -17,6 +17,7 @@ import {
   resolveApiPath,
   resolvePdfUrl,
   saveProject,
+  uploadTestImage,
 } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
 import { PdfOverlayPanel, sampleColor } from "./components/PdfOverlayPanel";
@@ -43,7 +44,8 @@ function sampleFileUrl(projectId: string, sampleId: string, fileName: string): s
 }
 
 function makeProjectId(): string {
-  return `project_${new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14)}`;
+  const timestamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
+  return `project_${timestamp}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
 export function App() {
@@ -85,7 +87,6 @@ export function App() {
   useEffect(() => {
     (async () => {
       try {
-        await ensureOperatorSession();
         const [health, cam] = await Promise.all([getHealth(), getCameraStatus()]);
         setCameraStatus(cam);
         const sam = (health as {
@@ -166,6 +167,31 @@ export function App() {
     latestAcceptedRequestIdRef.current = 0;
     invalidatePredictions();
     setReplaceSampleId(null);
+  }
+
+  function confirmDiscardActiveSegmentation(action: string): boolean {
+    const hasActiveSegmentation = Boolean(captureId || frozenImageHex || prompts.length || isPredicting || segReady);
+    return !hasActiveSegmentation || window.confirm(`Discard the active capture and segmentation to ${action}?`);
+  }
+
+  async function onOpenImage(file: File) {
+    if (!confirmDiscardActiveSegmentation("open an image")) {
+      return;
+    }
+    const status = await uploadTestImage(file);
+    resetActiveSegmentation();
+    setCameraStatus(status);
+    setStatusText(`Image source selected: ${file.name}`);
+  }
+
+  async function onReturnToLive() {
+    if (!confirmDiscardActiveSegmentation("return to the live camera")) {
+      return;
+    }
+    const status = await clearTestImage();
+    resetActiveSegmentation();
+    setCameraStatus(status);
+    setStatusText(status.camera_connected ? "Live camera preview restored" : "Live camera reconnecting...");
   }
 
   function confirmDiscardIfDirty(action: string): boolean {
@@ -563,6 +589,8 @@ export function App() {
             cameraStatus={cameraStatus}
             segmentationReady={segReady}
             onAddPoint={onAddPrompt}
+            onOpenImage={onOpenImage}
+            onReturnToLive={onReturnToLive}
           />
 
           <div className="panel">

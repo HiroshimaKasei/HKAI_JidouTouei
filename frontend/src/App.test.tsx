@@ -10,10 +10,20 @@ vi.mock("./components/PdfOverlayPanel", () => ({
 }));
 
 vi.mock("./components/CameraPanel", () => ({
-  CameraPanel: ({ onAddPoint }: { onAddPoint: (p: PromptPoint) => void }) => (
+  CameraPanel: ({
+    onAddPoint,
+    onOpenImage,
+    onReturnToLive,
+  }: {
+    onAddPoint: (p: PromptPoint) => void;
+    onOpenImage: (file: File) => Promise<void>;
+    onReturnToLive: () => Promise<void>;
+  }) => (
     <div>
       <button onClick={() => onAddPoint({ x: 10, y: 10, label: 1 })}>Add Positive</button>
       <button onClick={() => onAddPoint({ x: 3, y: 3, label: 0 })}>Add Negative</button>
+      <button onClick={() => void onOpenImage(new File(["image"], "fixture.png", { type: "image/png" }))}>Open Image</button>
+      <button onClick={() => void onReturnToLive()}>Return to Live Preview</button>
     </div>
   ),
 }));
@@ -30,6 +40,8 @@ const apiMock = vi.hoisted(() => {
     releaseOperatorSession: vi.fn().mockResolvedValue(undefined),
     getHealth: vi.fn().mockResolvedValue({ gpu: { device_name: "GPU", capability: "8.9", model_loaded: true } }),
     getCameraStatus: vi.fn().mockResolvedValue({ camera_available: false, camera_name: "TEST", mode: "test" }),
+    uploadTestImage: vi.fn().mockResolvedValue({ camera_available: false, camera_connected: false, camera_name: "TEST MODE: fixture.png", mode: "test", last_error: "" }),
+    clearTestImage: vi.fn().mockResolvedValue({ camera_available: true, camera_connected: false, camera_name: "IC4 available", mode: "camera", last_error: "" }),
     capture: vi.fn().mockImplementation(async () => captureCalls.shift() ?? { capture_id: "cap-x", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" }),
     prepareEmbedding: vi.fn().mockResolvedValue({ ok: true, prepare_ms: 12 }),
     predictMask: vi.fn().mockResolvedValue({ request_id: 1, scores: [0.95], best_index: 0, masks: ["ff"] }),
@@ -79,6 +91,7 @@ function pdfFile(name: string): File {
 async function createSample(): Promise<void> {
   fireEvent.click(screen.getByRole("button", { name: "Capture" }));
   await waitFor(() => expect(apiMock.capture).toHaveBeenCalled());
+  await waitFor(() => expect(apiMock.prepareEmbedding).toHaveBeenCalled());
   fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
   await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalled());
   fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
@@ -90,11 +103,16 @@ describe("App reliability regression", () => {
     vi.clearAllMocks();
     apiMock.getHealth.mockResolvedValue({ gpu: { device_name: "GPU", capability: "8.9", model_loaded: true } });
     apiMock.getCameraStatus.mockResolvedValue({ camera_available: false, camera_name: "TEST", mode: "test" });
+    const captureCalls = [
+      { capture_id: "cap-1", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" },
+      { capture_id: "cap-2", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" },
+      { capture_id: "cap-3", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" },
+    ];
+    apiMock.capture.mockImplementation(async () => captureCalls.shift() ?? { capture_id: "cap-x", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" });
+    apiMock.predictMask.mockResolvedValue({ request_id: 1, scores: [0.95], best_index: 0, masks: ["ff"] });
   });
 
   it("opens a new PDF as a clean inspection and new project id", async () => {
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-
     render(<App />);
 
     const openInput = document.querySelector('input[type="file"][accept="application/pdf"]') as HTMLInputElement;
@@ -107,7 +125,6 @@ describe("App reliability regression", () => {
 
     fireEvent.change(openInput, { target: { files: [pdfFile("second.pdf")] } });
 
-    await waitFor(() => expect(confirmSpy).toHaveBeenCalled());
     expect(screen.queryByText("Sample 001 (P1)")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
@@ -128,6 +145,7 @@ describe("App reliability regression", () => {
     await waitFor(() => expect(apiMock.registerCaptureFile).toHaveBeenCalled());
 
     fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => expect(apiMock.prepareEmbedding).toHaveBeenCalledTimes(2));
     fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
     await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalled());
     fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
@@ -197,5 +215,18 @@ describe("App reliability regression", () => {
     expect(acceptBtn).toBeDisabled();
 
     await waitFor(() => expect(acceptBtn).not.toBeDisabled());
+  });
+
+  it("returns from an image source to live preview without removing accepted samples", async () => {
+    render(<App />);
+    await createSample();
+
+    fireEvent.click(screen.getByRole("button", { name: "Open Image" }));
+    await waitFor(() => expect(apiMock.uploadTestImage).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Return to Live Preview" }));
+
+    await waitFor(() => expect(apiMock.clearTestImage).toHaveBeenCalled());
+    expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Accept Mask" })).toBeDisabled();
   });
 });

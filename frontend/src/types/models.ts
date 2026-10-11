@@ -32,6 +32,8 @@ export type SampleData = {
 
 export type CameraStatus = {
   camera_available: boolean;
+  camera_connected: boolean;
   camera_name: string;
   mode: "camera" | "test";
+  last_error: string;
 };

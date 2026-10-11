@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { frameUrl, uploadTestImage } from "../api";
+import { frameUrl } from "../api";
 import type { CameraStatus, PromptPoint } from "../types/models";
 
 type Props = {
@@ -11,6 +11,8 @@ type Props = {
   cameraStatus: CameraStatus | null;
   segmentationReady: boolean;
   onAddPoint: (p: PromptPoint) => void;
+  onOpenImage: (file: File) => Promise<void>;
+  onReturnToLive: () => Promise<void>;
 };
 
 function hexPngToDataUrl(hex: string): string {
@@ -25,6 +27,8 @@ export function CameraPanel({
   cameraStatus,
   segmentationReady,
   onAddPoint,
+  onOpenImage,
+  onReturnToLive,
 }: Props) {
   const [liveSrc, setLiveSrc] = useState<string>(frameUrl());
   const [zoom, setZoom] = useState(1);
@@ -77,14 +81,17 @@ export function CameraPanel({
   const maskUrl = useMemo(() => hexPngToDataUrl(maskHex), [maskHex]);
 
   function imageLayout() {
-    if (!frozenSize || canvasSize.width <= 0 || canvasSize.height <= 0) {
+    const rect = wrapperRef.current?.getBoundingClientRect();
+    const width = canvasSize.width || rect?.width || 0;
+    const height = canvasSize.height || rect?.height || 0;
+    if (!frozenSize || width <= 0 || height <= 0) {
       return null;
     }
-    const baseScale = Math.min(canvasSize.width / frozenSize.width, canvasSize.height / frozenSize.height);
+    const baseScale = Math.min(width / frozenSize.width, height / frozenSize.height);
     const drawW = frozenSize.width * baseScale * zoom;
     const drawH = frozenSize.height * baseScale * zoom;
-    const offX = (canvasSize.width - drawW) * 0.5 + pan.x;
-    const offY = (canvasSize.height - drawH) * 0.5 + pan.y;
+    const offX = (width - drawW) * 0.5 + pan.x;
+    const offY = (height - drawH) * 0.5 + pan.y;
     return { baseScale, drawW, drawH, offX, offY };
   }
 
@@ -159,7 +166,18 @@ export function CameraPanel({
     }
     try {
       setLoadErr("");
-      await uploadTestImage(file);
+      await onOpenImage(file);
+    } catch (err) {
+      setLoadErr((err as Error).message);
+    } finally {
+      ev.currentTarget.value = "";
+    }
+  }
+
+  async function onSelectLiveCamera() {
+    try {
+      setLoadErr("");
+      await onReturnToLive();
     } catch (err) {
       setLoadErr((err as Error).message);
     }
@@ -189,7 +207,8 @@ export function CameraPanel({
       <div className="panel-title">Capture + SAM Prompting</div>
       <div className="camera-meta">
         <span>{cameraStatus?.camera_name ?? "Camera status unavailable"}</span>
-        {!cameraStatus?.camera_available ? <span className="warn">TEST MODE</span> : null}
+        {cameraStatus?.mode === "test" ? <span className="warn">OPEN IMAGE</span> : null}
+        {cameraStatus?.mode === "camera" && !cameraStatus.camera_connected ? <span className="warn">RECONNECTING</span> : null}
       </div>
       <div
         ref={wrapperRef}
@@ -210,10 +229,20 @@ export function CameraPanel({
         {maskHex ? <img src={maskUrl} className="mask-overlay" alt="sam mask" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} /> : null}
         {promptMarkers}
       </div>
-      <label className="test-upload">
-        Load TEST MODE image
-        <input type="file" accept="image/*" onChange={onUploadTestMode} />
-      </label>
+      <div className="source-switch" role="group" aria-label="Camera source">
+        <button type="button" aria-pressed={cameraStatus?.mode !== "test"} onClick={onSelectLiveCamera}>
+          Live Camera
+        </button>
+        <label className="test-upload">
+          Open Image
+          <input type="file" accept="image/*" onChange={onUploadTestMode} />
+        </label>
+        {cameraStatus?.mode === "test" ? (
+          <button type="button" onClick={onSelectLiveCamera}>
+            Return to Live Preview
+          </button>
+        ) : null}
+      </div>
       {loadErr ? <div className="error-text">{loadErr}</div> : null}
       <div className="hint">Left click: positive. Right click: negative. Middle drag: pan. Wheel: zoom.</div>
     </div>

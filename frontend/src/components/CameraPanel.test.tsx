@@ -16,9 +16,11 @@ function setup(onAddPoint: (p: PromptPoint) => void) {
       frozenSize={{ width: 1000, height: 500 }}
       promptPoints={[]}
       maskHex={""}
-      cameraStatus={{ camera_available: false, camera_name: "TEST", mode: "test" }}
+      cameraStatus={{ camera_available: false, camera_connected: false, camera_name: "TEST", mode: "test", last_error: "" }}
       segmentationReady
       onAddPoint={onAddPoint}
+      onOpenImage={vi.fn().mockResolvedValue(undefined)}
+      onReturnToLive={vi.fn().mockResolvedValue(undefined)}
     />
   );
 
