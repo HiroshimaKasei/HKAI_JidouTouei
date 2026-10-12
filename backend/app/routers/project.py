@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import zipfile
 
 import cv2
 import numpy as np
@@ -20,6 +21,26 @@ pdf_export_service = PdfExportService()
 @router.get("/list")
 def list_projects() -> dict[str, object]:
     return {"projects": project_service.list_projects()}
+
+
+@router.post("/import")
+async def import_project_archive(
+    _token: str = Depends(require_operator_lock), archive: UploadFile = File(...)
+) -> dict[str, object]:
+    if not archive.filename or Path(archive.filename).suffix.lower() != ".hkai":
+        raise HTTPException(status_code=400, detail="An .hkai archive is required")
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".hkai") as temp:
+        temp.write(await archive.read())
+        temp_path = Path(temp.name)
+    try:
+        project_id = project_service.import_archive(temp_path)
+    except (ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return {"project_id": project_id}
 
 
 def _normalize_payload(payload: dict) -> dict:

@@ -5,12 +5,17 @@ import tempfile
 
 import cv2
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from pydantic import BaseModel
 from fastapi.responses import JSONResponse, Response
 
 from app.routers._operator_guard import require_operator_lock
 from app.state import camera_service, sam_service
 
 router = APIRouter(prefix="/api/camera", tags=["camera"])
+
+
+class CameraOrientationRequest(BaseModel):
+    orientation_deg: int
 
 
 @router.get("/status")
@@ -28,6 +33,15 @@ def frame() -> Response:
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to encode frame")
     return Response(content=buf.tobytes(), media_type="image/jpeg")
+
+
+@router.post("/orientation")
+def set_orientation(request: CameraOrientationRequest, _token: str = Depends(require_operator_lock)) -> dict[str, object]:
+    try:
+        camera_service.set_orientation(request.orientation_deg)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return camera_service.status()
 
 
 @router.post("/test-image")

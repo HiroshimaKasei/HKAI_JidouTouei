@@ -33,6 +33,7 @@ class CameraService:
         self._stop_event = threading.Event()
         self._worker: threading.Thread | None = None
         self._last_error = ""
+        self._orientation_deg = 90
 
         self._discover_and_start()
 
@@ -222,7 +223,24 @@ class CameraService:
                 "camera_name": self._camera_name,
                 "mode": mode,
                 "last_error": self._last_error,
+                "orientation_deg": getattr(self, "_orientation_deg", 90),
             }
+
+    def set_orientation(self, orientation_deg: int) -> None:
+        if orientation_deg not in {0, 90, 180, 270}:
+            raise ValueError("Unsupported orientation")
+        with self._lock:
+            self._orientation_deg = orientation_deg
+
+    @staticmethod
+    def _rotate(frame: np.ndarray, orientation_deg: int) -> np.ndarray:
+        if orientation_deg == 90:
+            return cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+        if orientation_deg == 180:
+            return cv2.rotate(frame, cv2.ROTATE_180)
+        if orientation_deg == 270:
+            return cv2.rotate(frame, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        return frame
 
     def set_test_image(self, image_path: Path) -> None:
         img = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
@@ -241,9 +259,9 @@ class CameraService:
     def _current_native_frame(self) -> np.ndarray:
         with self._lock:
             if self._test_mode_image is not None:
-                return self._test_mode_image.copy()
+                return self._rotate(self._test_mode_image.copy(), getattr(self, "_orientation_deg", 90))
             if self._latest_native_frame is not None:
-                return self._latest_native_frame.copy()
+                return self._rotate(self._latest_native_frame.copy(), getattr(self, "_orientation_deg", 90))
         raise RuntimeError("No camera frame available. Connect camera or load TEST MODE image.")
 
     def get_live_preview_frame(self, max_width: int = 1280) -> np.ndarray:

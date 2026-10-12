@@ -93,3 +93,47 @@ class ProjectService:
         finally:
             temp_path.unlink(missing_ok=True)
         return archive
+
+    def import_archive(self, archive_path: Path) -> str:
+        """Validate and atomically install a ZIP-compatible editable project archive."""
+        max_members = 2000
+        max_uncompressed_bytes = 1024 * 1024 * 1024
+        with zipfile.ZipFile(archive_path) as source:
+            members = source.infolist()
+            if len(members) > max_members or sum(member.file_size for member in members) > max_uncompressed_bytes:
+                raise ValueError("Archive exceeds import limits")
+            names = [member.filename for member in members]
+            if any(name.startswith("/") or ".." in Path(name).parts or "\\" in name for name in names):
+                raise ValueError("Archive contains unsafe paths")
+            if "project.json" not in names or "manifest.json" not in names:
+                raise ValueError("Archive is missing required metadata")
+            manifest = json.loads(source.read("manifest.json"))
+            project_id = str(manifest.get("project_id", ""))
+            self.project_dir(project_id)
+            expected = manifest.get("files", {})
+            if not isinstance(expected, dict):
+                raise ValueError("Archive manifest is invalid")
+            for name, digest in expected.items():
+                if name not in names or hashlib.sha256(source.read(name)).hexdigest() != digest:
+                    raise ValueError("Archive checksum validation failed")
+            with tempfile.TemporaryDirectory(dir=str(PROJECTS_DIR)) as temp_dir:
+                staging = Path(temp_dir) / project_id
+                staging.mkdir()
+                for member in members:
+                    if member.is_dir() or member.filename == "manifest.json":
+                        continue
+                    target = staging / member.filename
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(source.read(member.filename))
+                payload = self.load_json_from(staging)
+                if payload.get("project_id") != project_id:
+                    raise ValueError("Archive project ID mismatch")
+                destination = self.project_dir(project_id)
+                if destination.exists():
+                    raise ValueError("A project with this ID already exists")
+                os.replace(staging, destination)
+        return project_id
+
+    @staticmethod
+    def load_json_from(project_dir: Path) -> dict[str, Any]:
+        return json.loads((project_dir / "project.json").read_text(encoding="utf-8"))
