@@ -21,7 +21,10 @@ import {
 } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
 import { PdfOverlayPanel, sampleColor } from "./components/PdfOverlayPanel";
-import type { CameraStatus, PromptPoint, SampleData } from "./types/models";
+import type { CameraStatus, PromptPoint, SampleData, SampleStyle } from "./types/models";
+
+const DEFAULT_SAMPLE_STYLE: SampleStyle = { color: "#ff5500", lineType: "solid", widthMm: 0.35 };
+const STYLE_COLORS = ["#ff5500", "#0099ff", "#17a05d", "#c83f7f", "#b68000", "#1e78b7"];
 
 function hexToDataUrl(hex: string, mime = "image/png"): string {
   const bytes = hex.match(/.{1,2}/g)?.map((b) => String.fromCharCode(parseInt(b, 16))).join("") ?? "";
@@ -377,6 +380,7 @@ export function App() {
                 visible: true,
                 color: sampleColor(samples.length),
               },
+              style: replacementTarget?.style ?? { ...DEFAULT_SAMPLE_STYLE, color: sampleColor(samples.length) },
         capturePngHex: frozenImageHex,
         maskPngHex: resp.mask_png_hex,
         contourBwPngHex: resp.contour_bw_png_hex,
@@ -408,6 +412,16 @@ export function App() {
 
   function updateSample(sampleId: string, patch: Partial<SampleData["transform"]>) {
     setSamples((prev) => prev.map((s) => (s.sampleId === sampleId ? { ...s, transform: { ...s.transform, ...patch } } : s)));
+    setIsDirty(true);
+  }
+
+  function updateSampleStyle(sampleId: string, patch: Partial<SampleStyle>) {
+    setSamples((prev) => prev.map((s) => (s.sampleId === sampleId ? { ...s, style: { ...s.style, ...patch } } : s)));
+    setIsDirty(true);
+  }
+
+  function applyStyleToAll(style: SampleStyle) {
+    setSamples((prev) => prev.map((s) => ({ ...s, style: { ...style } })));
     setIsDirty(true);
   }
 
@@ -541,6 +555,11 @@ export function App() {
             visible: s.transform.visible,
             color: s.transform.color,
           },
+          style: {
+            color: s.style?.color ?? s.transform.color,
+            lineType: s.style?.line_type ?? "solid",
+            widthMm: s.style?.width_mm ?? 0.35,
+          },
           captureFile,
           maskFile,
           contourBwFile: contourFile,
@@ -556,6 +575,7 @@ export function App() {
   }
 
   const hasSegCandidates = candidateMasks.length > 0;
+  const selectedSample = samples.find((sample) => sample.sampleId === selectedSampleId) ?? null;
 
   const selectedMaskDataUrl = useMemo(() => {
     if (!maskPreviewHex) {
@@ -567,7 +587,7 @@ export function App() {
   return (
     <div className="app-root">
       <header className="topbar">
-        <div className="brand">HKAI JidouTouei MVP</div>
+        <div className="brand">AI自動投影</div>
         <label className="action-btn">
           Open PDF
           <input type="file" accept="application/pdf" onChange={onOpenPdf} />
@@ -624,6 +644,65 @@ export function App() {
             </div>
             {selectedMaskDataUrl ? <img className="mini-mask-preview" src={selectedMaskDataUrl} alt="selected mask" /> : null}
           </div>
+
+          {selectedSample ? (
+            <div className="panel line-properties">
+              <div className="panel-title">Line Properties</div>
+              <div className="control-row">
+                <input
+                  aria-label="Line color"
+                  type="color"
+                  value={selectedSample.style.color}
+                  onChange={(e) => updateSampleStyle(selectedSample.sampleId, { color: e.target.value })}
+                />
+                {STYLE_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    className="color-swatch"
+                    aria-label={`Set color ${color}`}
+                    title={color}
+                    style={{ backgroundColor: color }}
+                    onClick={() => updateSampleStyle(selectedSample.sampleId, { color })}
+                  />
+                ))}
+                <input
+                  aria-label="HEX color"
+                  className="hex-input"
+                  value={selectedSample.style.color}
+                  pattern="^#[0-9a-fA-F]{6}$"
+                  onChange={(e) => updateSampleStyle(selectedSample.sampleId, { color: e.target.value })}
+                />
+              </div>
+              <div className="control-row">
+                <select
+                  aria-label="Line type"
+                  value={selectedSample.style.lineType}
+                  onChange={(e) => updateSampleStyle(selectedSample.sampleId, { lineType: e.target.value as SampleStyle["lineType"] })}
+                >
+                  <option value="solid">Solid</option>
+                  <option value="dashed">Dashed</option>
+                  <option value="dash_dot">Dash-dot</option>
+                </select>
+                <label>
+                  mm
+                  <input
+                    aria-label="Line width in millimetres"
+                    type="number"
+                    min="0.01"
+                    max="10"
+                    step="0.01"
+                    value={selectedSample.style.widthMm}
+                    onChange={(e) => updateSampleStyle(selectedSample.sampleId, { widthMm: Math.max(0.01, Number(e.target.value) || 0.35) })}
+                  />
+                </label>
+                <span className={`line-preview ${selectedSample.style.lineType}`} style={{ borderColor: selectedSample.style.color, borderWidth: `${Math.max(1, selectedSample.style.widthMm * 3)}px` }} />
+              </div>
+              <div className="control-row">
+                <button onClick={() => applyStyleToAll(selectedSample.style)}>Apply to All Samples</button>
+                <button onClick={() => updateSampleStyle(selectedSample.sampleId, { ...DEFAULT_SAMPLE_STYLE, color: sampleColor(samples.indexOf(selectedSample)) })}>Restore Default Style</button>
+              </div>
+            </div>
+          ) : null}
 
           <div className="panel">
             <div className="panel-title">Sample List</div>

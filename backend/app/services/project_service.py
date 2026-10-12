@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import tempfile
 from typing import Any
+import hashlib
+import zipfile
 
 from app.config import PROJECTS_DIR
 
@@ -61,3 +63,33 @@ class ProjectService:
         if not PROJECTS_DIR.exists():
             return []
         return sorted([p.name for p in PROJECTS_DIR.iterdir() if p.is_dir()])
+
+    @staticmethod
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def create_archive(self, project_id: str) -> Path:
+        """Create the editable, ZIP-compatible project artifact without extraction."""
+        pdir = self.project_dir(project_id)
+        archive = pdir / f"{project_id}.hkai"
+        members = [path for path in pdir.rglob("*") if path.is_file() and path != archive]
+        manifest = {
+            "schema_version": 2,
+            "project_id": project_id,
+            "files": {path.relative_to(pdir).as_posix(): self._sha256(path) for path in members},
+        }
+        with tempfile.NamedTemporaryFile(delete=False, dir=str(pdir), suffix=".hkai") as tmp:
+            temp_path = Path(tmp.name)
+        try:
+            with zipfile.ZipFile(temp_path, "w", compression=zipfile.ZIP_DEFLATED) as output:
+                for path in members:
+                    output.write(path, path.relative_to(pdir).as_posix())
+                output.writestr("manifest.json", json.dumps(manifest, indent=2))
+            os.replace(temp_path, archive)
+        finally:
+            temp_path.unlink(missing_ok=True)
+        return archive

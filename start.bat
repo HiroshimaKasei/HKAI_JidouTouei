@@ -16,8 +16,8 @@ if not exist "%ROOT%\frontend\node_modules" (
   npm --prefix "%ROOT%\frontend" install
 )
 
-start "HKAI Backend" cmd /k "cd /d %ROOT%\backend && uvicorn app.main:app --host 127.0.0.1 --port 8000"
-start "HKAI Frontend" cmd /k "cd /d %ROOT%\frontend && npm run dev"
+start "AI Jidou Touei Backend" cmd /k "cd /d %ROOT%\backend && uvicorn app.main:app --host 127.0.0.1 --port 8000"
+start "AI Jidou Touei Frontend" cmd /k "cd /d %ROOT%\frontend && npm run dev"
 
 echo Started:
 echo Backend:  http://127.0.0.1:8000

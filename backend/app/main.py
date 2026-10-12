@@ -11,7 +11,7 @@ from app.config import FRONTEND_DIST_DIR, TRUSTED_LAN_CIDRS
 from app.routers import camera, health, project, sam, session
 from app.state import camera_service
 
-app = FastAPI(title="HKAI_JidouTouei API", version="0.1.0")
+app = FastAPI(title="AI自動投影 API", version="0.2.0")
 
 _trusted_networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
 for _cidr in TRUSTED_LAN_CIDRS:

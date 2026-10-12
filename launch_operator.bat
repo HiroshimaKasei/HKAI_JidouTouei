@@ -12,7 +12,7 @@ set "ERROR_LOG_FILE=%LOG_DIR%\server-error.log"
 set "PID_FILE=%LOG_DIR%\server.pid"
 
 if not exist "%VENV_PY%" (
-  echo [ERROR] HKAI is not prepared. Run prepare_lan.bat once first.
+  echo [ERROR] AI Jidou Touei is not prepared. Run prepare_lan.bat once first.
   exit /b 1
 )
 if not exist "%ROOT%frontend\dist\index.html" (
@@ -26,14 +26,14 @@ if not errorlevel 1 goto :open_browser
 
 powershell -NoProfile -Command "$connection = Get-NetTCPConnection -LocalPort %HKAI_PORT% -State Listen -ErrorAction SilentlyContinue; if ($connection) { exit 0 } else { exit 1 }"
 if not errorlevel 1 (
-  echo [ERROR] Port %HKAI_PORT% is already in use, but HKAI is not ready. Check "%LOG_FILE%".
+  echo [ERROR] Port %HKAI_PORT% is already in use, but AI Jidou Touei is not ready. Check "%LOG_FILE%".
   exit /b 1
 )
 
 del /q "%PID_FILE%" >nul 2>nul
 powershell -NoProfile -Command "$process = Start-Process -FilePath '%VENV_PY%' -ArgumentList '%ROOT%backend\run_server.py' -WorkingDirectory '%ROOT%backend' -RedirectStandardOutput '%LOG_FILE%' -RedirectStandardError '%ERROR_LOG_FILE%' -PassThru; $process.Id | Set-Content -NoNewline '%PID_FILE%'"
 if errorlevel 1 (
-  echo [ERROR] Failed to start HKAI. Check "%LOG_FILE%".
+  echo [ERROR] Failed to start AI Jidou Touei. Check "%LOG_FILE%".
   exit /b 1
 )
 
@@ -42,11 +42,11 @@ for /l %%I in (1,1,20) do (
   if not errorlevel 1 goto :open_browser
   timeout /t 1 /nobreak >nul
 )
-echo [ERROR] HKAI did not become ready. Check "%LOG_FILE%".
+echo [ERROR] AI Jidou Touei did not become ready. Check "%LOG_FILE%".
 exit /b 1
 
 :open_browser
 start "" "%URL%"
-echo [INFO] HKAI ready at %URL%
+echo [INFO] AI Jidou Touei ready at %URL%
 echo [INFO] LAN PCs: http://SERVER-LAN-IP:%HKAI_PORT%
 endlocal

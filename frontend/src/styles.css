@@ -243,6 +243,32 @@ button:hover {
   text-align: left;
 }
 
+.color-swatch {
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  padding: 0;
+  border-radius: 4px;
+}
+
+.hex-input {
+  width: 88px;
+}
+
+.line-preview {
+  width: 56px;
+  height: 0;
+  border-top-style: solid;
+}
+
+.line-preview.dashed {
+  border-top-style: dashed;
+}
+
+.line-preview.dash_dot {
+  border-top-style: dashed;
+}
+
 .pdf-panel {
   height: 100%;
   min-height: 0;

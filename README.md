@@ -1,6 +1,6 @@
-# HKAI_JidouTouei
+# AI自動投影
 
-MVP implementation for local factory-side PDF overlay alignment using camera capture, interactive SAM segmentation, contour export, and project save/load.
+Factory-side PDF overlay alignment using camera capture, interactive SAM segmentation, contour export, and editable project save/load.
 
 ## Scope implemented
 
@@ -82,7 +82,7 @@ prepare_lan.bat
 Notes:
 
 - Run `prepare_lan.bat` once after installation or updates. It creates the venv, installs dependencies, and builds the production frontend.
-- Run `create_desktop_shortcut.bat` once to create the `HKAI Operator` desktop shortcut. The shortcut runs `launch_operator.bat`, which starts the prepared server only when needed, waits for `/api/health/`, then opens the browser.
+- Run `create_desktop_shortcut.bat` once to create the `AI自動投影` desktop shortcut. The shortcut runs `launch_operator.bat`, which starts the prepared server only when needed, waits for `/api/health/`, then opens the browser.
 - `stop_operator.bat` stops the launcher-managed server. Logs are in `logs/server.log` and `logs/server-error.log`.
 - `start_lan.bat` remains the compatibility full prepare-and-launch command.
 - The production server is bound to `0.0.0.0` but protected by `HKAI_TRUSTED_LAN_CIDRS`; it is not an internet-facing deployment.
@@ -216,7 +216,7 @@ Covered:
 - IC4 camera service is scaffolded with explicit TEST MODE fallback; the exact DFK 33UX178 acquisition call path is not fully hardware-validated in this environment.
 - Frontend build/test execution requires Node.js/npm to be installed locally.
 - Python 3.11 is required for target runtime; this development environment executed tests on Python 3.10.
-- No calibration/mm conversion is implemented (by design for this MVP).
+- PDF placement remains compatible with the existing display-coordinate projects; vector export converts saved line widths from millimetres to PDF points.
 
 ## Out of scope intentionally excluded
 

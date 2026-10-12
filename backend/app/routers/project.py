@@ -10,9 +10,11 @@ from pydantic import ValidationError
 
 from app.routers._operator_guard import require_operator_lock
 from app.schemas.models import LoadProjectResponse, SaveProjectPayload
+from app.services.pdf_export_service import PdfExportService
 from app.state import contour_service, project_service
 
 router = APIRouter(prefix="/api/project", tags=["project"])
+pdf_export_service = PdfExportService()
 
 
 @router.get("/list")
@@ -21,7 +23,11 @@ def list_projects() -> dict[str, object]:
 
 
 def _normalize_payload(payload: dict) -> dict:
-    # Backward compatibility for older project files that omitted page_number/files.
+    # Backward compatibility for older project files that omitted page_number/files/style.
+    payload.setdefault("schema_version", 1)
+    payload.setdefault("project_name", "")
+    payload.setdefault("source_pdf_hash", "")
+    payload.setdefault("source_drive_file_id", "")
     selected_page = int(payload.get("selected_page", 1))
     for sample in payload.get("samples", []):
         sample.setdefault("page_number", selected_page)
@@ -29,6 +35,12 @@ def _normalize_payload(payload: dict) -> dict:
         sample["files"].setdefault("capture", "")
         sample["files"].setdefault("mask", "")
         sample["files"].setdefault("contour_bw", "")
+        transform = sample.setdefault("transform", {})
+        transform.setdefault("color", "#ff5500")
+        style = sample.setdefault("style", {})
+        style.setdefault("color", transform["color"])
+        style.setdefault("line_type", "solid")
+        style.setdefault("width_mm", 0.35)
     return payload
 
 
@@ -117,7 +129,23 @@ async def save_project(
                     (sdir / "contour.dxf").write_bytes(export.dxf_path.read_bytes())
 
     project_service.save_json(project_id, out_payload)
-    return {"ok": True}
+    source_pdf_path = pdir / "source.pdf"
+    result_pdf_path = pdir / "result.pdf"
+    export_error = ""
+    if source_pdf_path.exists():
+        try:
+            pdf_export_service.export(source_pdf_path, result_pdf_path, out_payload)
+        except Exception:
+            # Local editable state remains authoritative even if an old or corrupt PDF cannot render.
+            result_pdf_path.unlink(missing_ok=True)
+            export_error = "Unable to generate vector PDF from the source document"
+    archive_path = project_service.create_archive(project_id)
+    return {
+        "ok": True,
+        "result_pdf_url": f"/api/project/{project_id}/result.pdf" if not export_error else "",
+        "archive_url": f"/api/project/{project_id}/{archive_path.name}",
+        "export_error": export_error,
+    }
 
 
 @router.get("/load/{project_id}", response_model=LoadProjectResponse)
@@ -142,6 +170,24 @@ def source_pdf(project_id: str) -> FileResponse:
     if not p.exists():
         raise HTTPException(status_code=404, detail="source.pdf not found")
     return FileResponse(path=p, media_type="application/pdf", filename="source.pdf")
+
+
+@router.get("/{project_id}/result.pdf")
+def result_pdf(project_id: str) -> FileResponse:
+    p = project_service.project_dir(project_id) / "result.pdf"
+    if not p.exists():
+        raise HTTPException(status_code=404, detail="result.pdf not found")
+    return FileResponse(path=p, media_type="application/pdf", filename="result.pdf")
+
+
+@router.get("/{project_id}/{archive_name}.hkai")
+def project_archive(project_id: str, archive_name: str) -> FileResponse:
+    if archive_name != project_id:
+        raise HTTPException(status_code=404, detail="archive not found")
+    path = project_service.project_dir(project_id) / f"{project_id}.hkai"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="archive not found")
+    return FileResponse(path=path, media_type="application/zip", filename=path.name)
 
 
 @router.get("/{project_id}/samples/{sample_id}/{name}")

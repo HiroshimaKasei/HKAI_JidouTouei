@@ -45,6 +45,12 @@ class SampleTransform(BaseModel):
     color: str = "#ff5500"
 
 
+class SampleStyle(BaseModel):
+    color: str = "#ff5500"
+    line_type: Literal["solid", "dashed", "dash_dot"] = "solid"
+    width_mm: float = Field(default=0.35, gt=0.0, le=10.0)
+
+
 class SaveSamplePayload(BaseModel):
     sample_id: str
     capture_id: str
@@ -56,12 +62,17 @@ class SaveSamplePayload(BaseModel):
     hole_points: list[list[list[float]]] = Field(default_factory=list)
     files: SampleFileRefs = Field(default_factory=SampleFileRefs)
     transform: SampleTransform = Field(default_factory=SampleTransform)
+    style: SampleStyle = Field(default_factory=SampleStyle)
 
 
 class SaveProjectPayload(BaseModel):
     project_id: str
     selected_page: int
     overlay_scale: float = 1.0
+    schema_version: int = 2
+    project_name: str = ""
+    source_pdf_hash: str = ""
+    source_drive_file_id: str = ""
     samples: list[SaveSamplePayload] = Field(default_factory=list)
 
 

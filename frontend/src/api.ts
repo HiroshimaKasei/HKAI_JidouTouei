@@ -297,6 +297,11 @@ export async function saveProject(
       visible: s.transform.visible,
       color: s.transform.color,
     },
+    style: {
+      color: s.style.color,
+      line_type: s.style.lineType,
+      width_mm: s.style.widthMm,
+    },
     files: {
       capture: "",
       mask: "",
@@ -376,6 +381,7 @@ export async function loadProject(projectId: string): Promise<{
     hole_points: number[][][];
     files?: { capture?: string; mask?: string; contour_bw?: string };
     transform: { tx: number; ty: number; rotation_deg: number; visible: boolean; color: string };
+    style?: { color?: string; line_type?: "solid" | "dashed" | "dash_dot"; width_mm?: number };
   }>;
 }> {
   const res = await fetch(apiUrl(`/api/project/load/${projectId}`));

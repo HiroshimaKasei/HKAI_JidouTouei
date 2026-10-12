@@ -36,6 +36,16 @@ type DragMode =
 const COLORS = ["#ff5500", "#0099ff", "#17a05d", "#c83f7f", "#b68000", "#1e78b7"];
 export const sampleColor = (index: number) => COLORS[index % COLORS.length];
 
+function dashFor(lineType: SampleData["style"]["lineType"]): number[] {
+  if (lineType === "dashed") {
+    return [10, 6];
+  }
+  if (lineType === "dash_dot") {
+    return [12, 5, 2, 5];
+  }
+  return [];
+}
+
 function calcCentroid(sample: SampleData): { x: number; y: number } {
   const all = [...sample.outerContours, ...sample.holeContours].flat();
   if (all.length === 0) {
@@ -254,7 +264,7 @@ export function PdfOverlayPanel({
               <Layer>
                 {visibleSamples.map((sample) => {
                   const isSelected = sample.sampleId === selectedSampleId;
-                  const baseStroke = isSelected ? 2.4 : 1.4;
+                  const baseStroke = Math.max(0.7, sample.style.widthMm * 3.78);
                   const centroid = centroidBySample.get(sample.sampleId) ?? { x: 0, y: 0 };
                   const allContours = [...sample.outerContours, ...sample.holeContours];
 
@@ -277,8 +287,9 @@ export function PdfOverlayPanel({
                             key={`${sample.sampleId}-${idx}`}
                             points={shifted}
                             closed
-                            stroke={sample.transform.color}
-                            strokeWidth={baseStroke / Math.max(overlayScale, 0.01)}
+                            stroke={sample.style.color}
+                            dash={dashFor(sample.style.lineType)}
+                            strokeWidth={(isSelected ? baseStroke + 1 : baseStroke) / Math.max(overlayScale, 0.01)}
                             hitStrokeWidth={10 / Math.max(overlayScale, 0.01)}
                             listening
                           />

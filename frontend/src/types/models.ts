@@ -12,6 +12,12 @@ export type SampleTransform = {
   color: string;
 };
 
+export type SampleStyle = {
+  color: string;
+  lineType: "solid" | "dashed" | "dash_dot";
+  widthMm: number;
+};
+
 export type SampleData = {
   sampleId: string;
   captureId: string;
@@ -22,6 +28,7 @@ export type SampleData = {
   outerContours: number[][][];
   holeContours: number[][][];
   transform: SampleTransform;
+  style: SampleStyle;
   capturePngHex?: string;
   maskPngHex?: string;
   contourBwPngHex?: string;
