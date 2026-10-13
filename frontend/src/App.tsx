@@ -21,6 +21,7 @@ import {
 } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
 import { PdfOverlayPanel, sampleColor } from "./components/PdfOverlayPanel";
+import { translateStatus, useLocale } from "./i18n";
 import type { CameraStatus, PromptPoint, SampleData, SampleStyle } from "./types/models";
 
 const DEFAULT_SAMPLE_STYLE: SampleStyle = { color: "#ff5500", lineType: "solid", widthMm: 0.35 };
@@ -52,6 +53,7 @@ function makeProjectId(): string {
 }
 
 export function App() {
+  const { language, setLanguage, t } = useLocale();
   const [statusText, setStatusText] = useState("Initializing");
   const [cameraStatus, setCameraStatus] = useState<CameraStatus | null>(null);
   const [gpuStatus, setGpuStatus] = useState<string>("SAM: Checking");
@@ -84,8 +86,24 @@ export function App() {
   const activePredictTokenRef = useRef(0);
 
   const [isDirty, setIsDirty] = useState(false);
+  const [leftPaneWidth, setLeftPaneWidth] = useState(() => Number(window.localStorage.getItem("hkai-left-pane-width")) || 500);
 
   const projectIdRef = useRef(makeProjectId());
+
+  useEffect(() => {
+    window.localStorage.setItem("hkai-left-pane-width", String(leftPaneWidth));
+  }, [leftPaneWidth]);
+
+  function startResizeDivider(event: React.PointerEvent<HTMLDivElement>) {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent: PointerEvent) => setLeftPaneWidth(Math.max(360, Math.min(window.innerWidth - 560, moveEvent.clientX)));
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  }
 
   useEffect(() => {
     (async () => {
@@ -589,17 +607,21 @@ export function App() {
       <header className="topbar">
         <div className="brand">AI自動投影</div>
         <label className="action-btn">
-          Open PDF
+          {t("openPdf")}
           <input type="file" accept="application/pdf" onChange={onOpenPdf} />
         </label>
-        <button className="action-btn" onClick={onCapture}>Capture</button>
-        <button className="action-btn" onClick={onSaveProject}>Save</button>
-        <button className="action-btn" onClick={onLoadProject}>Load</button>
+        <button className="action-btn primary-action" onClick={onCapture}>{t("capture")}</button>
+        <button className="action-btn" onClick={onSaveProject}>{t("save")}</button>
+        <button className="action-btn" onClick={onLoadProject}>{t("load")}</button>
         <div className="status-chip">{gpuStatus}</div>
-        <div className="status-chip">{statusText}</div>
+        <div className="status-chip" aria-live="polite">{translateStatus(language, statusText)}</div>
+        <div className="language-switch" role="group" aria-label={t("language")}>
+          <button className={language === "ja" ? "active" : ""} onClick={() => setLanguage("ja")}>日本語</button>
+          <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>English</button>
+        </div>
       </header>
 
-      <main className="layout-grid">
+      <main className="layout-grid" style={{ "--left-pane-width": `${leftPaneWidth}px` } as React.CSSProperties}>
         <section className="left-pane">
           <CameraPanel
             frozenImageHex={frozenImageHex}
@@ -611,21 +633,22 @@ export function App() {
             onAddPoint={onAddPrompt}
             onOpenImage={onOpenImage}
             onReturnToLive={onReturnToLive}
+            language={language}
           />
 
-          <div className="panel">
-            <div className="panel-title">Segmentation Controls</div>
+          <div className="panel compact-panel">
+            <div className="panel-title">{t("segmentation")}</div>
             <div className="control-row">
-              <button onClick={onUndoPrompt} disabled={prompts.length === 0 || isPredicting}>Undo Prompt</button>
-              <button onClick={onResetPrompts} disabled={isPredicting}>Reset Prompts</button>
-              <button onClick={onRedoSegmentation} disabled={isPredicting}>Redo</button>
+              <button onClick={onUndoPrompt} disabled={prompts.length === 0 || isPredicting}>{t("undo")}</button>
+              <button onClick={onResetPrompts} disabled={isPredicting}>{t("resetPrompts")}</button>
+              <button onClick={onRedoSegmentation} disabled={isPredicting}>{t("redo")}</button>
             </div>
             <div className="control-row">
-              <button onClick={onAcceptMask} disabled={!hasSegCandidates || isPredicting || !hasLatestPrediction}>Accept Mask</button>
-              <button onClick={onCancelSegmentation}>Cancel</button>
+              <button className="primary-action" onClick={onAcceptMask} disabled={!hasSegCandidates || isPredicting || !hasLatestPrediction}>{t("acceptMask")}</button>
+              <button onClick={onCancelSegmentation}>{t("cancel")}</button>
             </div>
             <div className="control-row">
-              <label>Candidate</label>
+              <label>{t("candidate")}</label>
               <select
                 value={selectedCandidateIndex}
                 onChange={(e) => {
@@ -646,11 +669,11 @@ export function App() {
           </div>
 
           {selectedSample ? (
-            <div className="panel line-properties">
-              <div className="panel-title">Line Properties</div>
+            <div className="panel compact-panel line-properties">
+              <div className="panel-title">{t("lineProperties")}</div>
               <div className="control-row">
                 <input
-                  aria-label="Line color"
+                  aria-label={t("lineColor")}
                   type="color"
                   value={selectedSample.style.color}
                   onChange={(e) => updateSampleStyle(selectedSample.sampleId, { color: e.target.value })}
@@ -675,16 +698,16 @@ export function App() {
               </div>
               <div className="control-row">
                 <select
-                  aria-label="Line type"
+                  aria-label={t("lineType")}
                   value={selectedSample.style.lineType}
                   onChange={(e) => updateSampleStyle(selectedSample.sampleId, { lineType: e.target.value as SampleStyle["lineType"] })}
                 >
-                  <option value="solid">Solid</option>
-                  <option value="dashed">Dashed</option>
-                  <option value="dash_dot">Dash-dot</option>
+                  <option value="solid">{t("solid")}</option>
+                  <option value="dashed">{t("dashed")}</option>
+                  <option value="dash_dot">{t("dashDot")}</option>
                 </select>
                 <label>
-                  mm
+                  {t("lineThickness")} (mm)
                   <input
                     aria-label="Line width in millimetres"
                     type="number"
@@ -698,29 +721,29 @@ export function App() {
                 <span className={`line-preview ${selectedSample.style.lineType}`} style={{ borderColor: selectedSample.style.color, borderWidth: `${Math.max(1, selectedSample.style.widthMm * 3)}px` }} />
               </div>
               <div className="control-row">
-                <button onClick={() => applyStyleToAll(selectedSample.style)}>Apply to All Samples</button>
-                <button onClick={() => updateSampleStyle(selectedSample.sampleId, { ...DEFAULT_SAMPLE_STYLE, color: sampleColor(samples.indexOf(selectedSample)) })}>Restore Default Style</button>
+                <button onClick={() => applyStyleToAll(selectedSample.style)}>{t("applyAll")}</button>
+                <button onClick={() => updateSampleStyle(selectedSample.sampleId, { ...DEFAULT_SAMPLE_STYLE, color: sampleColor(samples.indexOf(selectedSample)) })}>{t("restoreDefaults")}</button>
               </div>
             </div>
           ) : null}
 
-          <div className="panel">
-            <div className="panel-title">Sample List</div>
+          <div className="panel compact-panel">
+            <div className="panel-title">{t("samples")}</div>
             <div className="sample-list">
               {samples.map((s) => (
                 <div key={s.sampleId} className={selectedSampleId === s.sampleId ? "sample-item active" : "sample-item"}>
                   <button className="sample-label" onClick={() => setSelectedSampleId(s.sampleId)}>
-                    Sample {s.sampleId} (P{s.pageNumber})
+                    {t("sample")} {s.sampleId} (P{s.pageNumber})
                   </button>
-                  <button onClick={() => updateSample(s.sampleId, { visible: !s.transform.visible })}>{s.transform.visible ? "Hide" : "Show"}</button>
-                  <button onClick={() => deleteSample(s.sampleId)}>Delete</button>
+                  <button onClick={() => updateSample(s.sampleId, { visible: !s.transform.visible })}>{s.transform.visible ? t("hide") : t("show")}</button>
+                  <button onClick={() => deleteSample(s.sampleId)}>{t("delete")}</button>
                 </div>
               ))}
             </div>
             <div className="control-row">
-              <button onClick={redoSelectedSample} disabled={!selectedSampleId || isPredicting}>Redo Segmentation</button>
+              <button onClick={redoSelectedSample} disabled={!selectedSampleId || isPredicting}>{t("redoSegmentation")}</button>
               <label>
-                Overlay Scale
+                {t("overlayScale")}
                 <input
                   type="number"
                   step="0.01"
@@ -733,6 +756,8 @@ export function App() {
           </div>
         </section>
 
+        <div className="resize-divider" role="separator" aria-orientation="vertical" aria-label="Resize workspace" onPointerDown={startResizeDivider} />
+
         <section className="right-pane">
           <PdfOverlayPanel
             pdfSource={pdfSource}
@@ -743,6 +768,7 @@ export function App() {
             setSelectedSampleId={setSelectedSampleId}
             overlayScale={overlayScale}
             onUpdateSample={updateSample}
+            language={language}
           />
         </section>
       </main>

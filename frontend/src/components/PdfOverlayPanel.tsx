@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Group, Layer, Line, Stage } from "react-konva";
 
+import { translate, type Language } from "../i18n";
 import type { SampleData } from "../types/models";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
@@ -15,6 +16,7 @@ type Props = {
   setSelectedSampleId: (id: string | null) => void;
   overlayScale: number;
   onUpdateSample: (sampleId: string, patch: Partial<SampleData["transform"]>) => void;
+  language: Language;
 };
 
 type DragMode =
@@ -69,6 +71,7 @@ export function PdfOverlayPanel({
   setSelectedSampleId,
   overlayScale,
   onUpdateSample,
+  language,
 }: Props) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
   const [numPages, setNumPages] = useState(0);
@@ -229,12 +232,12 @@ export function PdfOverlayPanel({
 
   return (
     <div className="panel pdf-panel">
-      <div className="panel-title">PDF + Contour Overlay</div>
+      <div className="panel-title">{translate(language, "pdfOverlay")}</div>
       <div className="page-toolbar">
-        <button onClick={() => setSelectedPage(Math.max(1, selectedPage - 1))} disabled={selectedPage <= 1}>Prev</button>
-        <span>Page {selectedPage}{numPages ? ` / ${numPages}` : ""}</span>
-        <button onClick={() => setSelectedPage(Math.min(numPages || selectedPage + 1, selectedPage + 1))} disabled={numPages > 0 && selectedPage >= numPages}>Next</button>
-        <span>Zoom {Math.round(pdfZoom * 100)}%</span>
+        <button onClick={() => setSelectedPage(Math.max(1, selectedPage - 1))} disabled={selectedPage <= 1}>{translate(language, "previous")}</button>
+        <span>{translate(language, "page")} {selectedPage}{numPages ? ` / ${numPages}` : ""}</span>
+        <button onClick={() => setSelectedPage(Math.min(numPages || selectedPage + 1, selectedPage + 1))} disabled={numPages > 0 && selectedPage >= numPages}>{translate(language, "next")}</button>
+        <span>{translate(language, "zoom")} {Math.round(pdfZoom * 100)}%</span>
       </div>
       <div
         ref={viewportRef}
@@ -250,7 +253,7 @@ export function PdfOverlayPanel({
           style={{ transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${pdfZoom})`, transformOrigin: "0 0" }}
           onContextMenu={(e) => e.preventDefault()}
         >
-          <Document file={pdfSource ?? undefined} onLoadSuccess={onDocLoadSuccess}>
+          {pdfSource ? <Document file={pdfSource} onLoadSuccess={onDocLoadSuccess}>
             <Page
               pageNumber={selectedPage}
               width={1000}
@@ -258,7 +261,7 @@ export function PdfOverlayPanel({
               renderAnnotationLayer={false}
               onRenderSuccess={(page) => setPageSize({ width: page.width, height: page.height })}
             />
-          </Document>
+          </Document> : <div className="pdf-empty">{translate(language, "noPdf")}</div>}
           <div className="overlay-stage-wrap">
             <Stage width={stageW} height={stageH} onMouseMove={onStageMouseMove} onMouseUp={() => setDragMode({ kind: "none" })}>
               <Layer>
@@ -303,7 +306,7 @@ export function PdfOverlayPanel({
           </div>
         </div>
       </div>
-      <div className="hint">Middle drag: pan viewport. Wheel: zoom around cursor. Left drag sample: move. Right drag sample: rotate.</div>
+      <div className="hint">{translate(language, "pdfHint")}</div>
     </div>
   );
 }

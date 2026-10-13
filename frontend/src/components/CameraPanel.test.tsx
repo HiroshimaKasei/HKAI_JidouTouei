@@ -21,6 +21,7 @@ function setup(onAddPoint: (p: PromptPoint) => void) {
       onAddPoint={onAddPoint}
       onOpenImage={vi.fn().mockResolvedValue(undefined)}
       onReturnToLive={vi.fn().mockResolvedValue(undefined)}
+      language="en"
     />
   );
 

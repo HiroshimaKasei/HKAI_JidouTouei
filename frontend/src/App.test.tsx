@@ -2,6 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
+import { translate, translateStatus, translationKeys } from "./i18n";
 import type { PromptPoint } from "./types/models";
 
 vi.mock("./components/PdfOverlayPanel", () => ({
@@ -100,6 +101,7 @@ async function createSample(): Promise<void> {
 
 describe("App reliability regression", () => {
   beforeEach(() => {
+    window.localStorage.setItem("hkai-language", "en");
     vi.clearAllMocks();
     apiMock.getHealth.mockResolvedValue({ gpu: { device_name: "GPU", capability: "8.9", model_loaded: true } });
     apiMock.getCameraStatus.mockResolvedValue({ camera_available: false, camera_name: "TEST", mode: "test" });
@@ -228,5 +230,36 @@ describe("App reliability regression", () => {
     await waitFor(() => expect(apiMock.clearTestImage).toHaveBeenCalled());
     expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Accept Mask" })).toBeDisabled();
+  });
+});
+
+describe("localization", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("defaults to Japanese, switches to English, and persists the selection", async () => {
+    render(<App />);
+
+    expect(screen.getByRole("button", { name: "撮影" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("ja");
+
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(screen.getByRole("button", { name: "Capture" })).toBeInTheDocument();
+    expect(document.documentElement.lang).toBe("en");
+    expect(window.localStorage.getItem("hkai-language")).toBe("en");
+  });
+
+  it("has a Japanese and English value for every translation key", () => {
+    for (const key of translationKeys) {
+      expect(translate("ja", key)).not.toBe("");
+      expect(translate("en", key)).not.toBe("");
+    }
+  });
+
+  it("translates dynamic ready and inference statuses at render time", () => {
+    expect(translateStatus("ja", "Ready")).toBe("準備完了");
+    expect(translateStatus("ja", "Running SAM inference...")).toBe("SAM推論を実行中...");
+    expect(translateStatus("en", "Ready")).toBe("Ready");
   });
 });

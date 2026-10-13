@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { frameUrl } from "../api";
+import { translate, type Language } from "../i18n";
 import type { CameraStatus, PromptPoint } from "../types/models";
 
 type Props = {
@@ -13,6 +14,7 @@ type Props = {
   onAddPoint: (p: PromptPoint) => void;
   onOpenImage: (file: File) => Promise<void>;
   onReturnToLive: () => Promise<void>;
+  language: Language;
 };
 
 function hexPngToDataUrl(hex: string): string {
@@ -29,6 +31,7 @@ export function CameraPanel({
   onAddPoint,
   onOpenImage,
   onReturnToLive,
+  language,
 }: Props) {
   const [liveSrc, setLiveSrc] = useState<string>(frameUrl());
   const [zoom, setZoom] = useState(1);
@@ -37,6 +40,7 @@ export function CameraPanel({
   const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
   const [loadErr, setLoadErr] = useState<string>("");
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
+  const [sourceSize, setSourceSize] = useState({ width: 2, height: 3 });
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
 
@@ -79,6 +83,12 @@ export function CameraPanel({
   }, [frozenImageHex, liveSrc]);
 
   const maskUrl = useMemo(() => hexPngToDataUrl(maskHex), [maskHex]);
+  const displaySize = frozenSize ?? sourceSize;
+
+  function resetView() {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  }
 
   function imageLayout() {
     const rect = wrapperRef.current?.getBoundingClientRect();
@@ -204,11 +214,11 @@ export function CameraPanel({
 
   return (
     <div className="panel camera-panel">
-      <div className="panel-title">Capture + SAM Prompting</div>
+      <div className="panel-title">{translate(language, "camera")}</div>
       <div className="camera-meta">
-        <span>{cameraStatus?.camera_name ?? "Camera status unavailable"}</span>
-        {cameraStatus?.mode === "test" ? <span className="warn">OPEN IMAGE</span> : null}
-        {cameraStatus?.mode === "camera" && !cameraStatus.camera_connected ? <span className="warn">RECONNECTING</span> : null}
+        <span>{cameraStatus?.camera_name ?? translate(language, "cameraUnavailable")}</span>
+        {cameraStatus?.mode === "test" ? <span className="warn">{translate(language, "openImageMode")}</span> : null}
+        {cameraStatus?.mode === "camera" && !cameraStatus.camera_connected ? <span className="warn">{translate(language, "reconnecting")}</span> : null}
       </div>
       <div
         ref={wrapperRef}
@@ -219,32 +229,39 @@ export function CameraPanel({
         onMouseLeave={onMouseUp}
         onContextMenu={(e) => e.preventDefault()}
         onWheel={onWheel}
+        style={{ aspectRatio: `${displaySize.width} / ${displaySize.height}` }}
       >
         <img
           src={imageUrl}
           className="camera-image"
           alt="camera"
           style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
+          onLoad={(event) => {
+            if (!frozenSize) {
+              setSourceSize({ width: event.currentTarget.naturalWidth || 2, height: event.currentTarget.naturalHeight || 3 });
+            }
+          }}
         />
         {maskHex ? <img src={maskUrl} className="mask-overlay" alt="sam mask" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} /> : null}
         {promptMarkers}
       </div>
-      <div className="source-switch" role="group" aria-label="Camera source">
+      <div className="source-switch" role="group" aria-label={translate(language, "cameraSource")}>
         <button type="button" aria-pressed={cameraStatus?.mode !== "test"} onClick={onSelectLiveCamera}>
-          Live Camera
+          {translate(language, "liveCamera")}
         </button>
         <label className="test-upload">
-          Open Image
+          {translate(language, "openImage")}
           <input type="file" accept="image/*" onChange={onUploadTestMode} />
         </label>
+        <button type="button" onClick={resetView}>{translate(language, "fitView")}</button>
         {cameraStatus?.mode === "test" ? (
           <button type="button" onClick={onSelectLiveCamera}>
-            Return to Live Preview
+            {translate(language, "returnLive")}
           </button>
         ) : null}
       </div>
       {loadErr ? <div className="error-text">{loadErr}</div> : null}
-      <div className="hint">Left click: positive. Right click: negative. Middle drag: pan. Wheel: zoom.</div>
+      <div className="hint">{translate(language, "positiveHint")}</div>
     </div>
   );
 }
