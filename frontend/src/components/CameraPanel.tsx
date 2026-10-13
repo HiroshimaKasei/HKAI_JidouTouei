@@ -34,10 +34,6 @@ export function CameraPanel({
   language,
 }: Props) {
   const [liveSrc, setLiveSrc] = useState<string>(frameUrl());
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [dragging, setDragging] = useState(false);
-  const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
   const [loadErr, setLoadErr] = useState<string>("");
   const [canvasSize, setCanvasSize] = useState({ width: 0, height: 0 });
   const [sourceSize, setSourceSize] = useState({ width: 2, height: 3 });
@@ -85,11 +81,6 @@ export function CameraPanel({
   const maskUrl = useMemo(() => hexPngToDataUrl(maskHex), [maskHex]);
   const displaySize = frozenSize ?? sourceSize;
 
-  function resetView() {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-  }
-
   function imageLayout() {
     const rect = wrapperRef.current?.getBoundingClientRect();
     const width = canvasSize.width || rect?.width || 0;
@@ -98,11 +89,9 @@ export function CameraPanel({
       return null;
     }
     const baseScale = Math.min(width / frozenSize.width, height / frozenSize.height);
-    const drawW = frozenSize.width * baseScale * zoom;
-    const drawH = frozenSize.height * baseScale * zoom;
-    const offX = (width - drawW) * 0.5 + pan.x;
-    const offY = (height - drawH) * 0.5 + pan.y;
-    return { baseScale, drawW, drawH, offX, offY };
+    const drawW = frozenSize.width * baseScale;
+    const drawH = frozenSize.height * baseScale;
+    return { baseScale, offX: (width - drawW) * 0.5, offY: (height - drawH) * 0.5 };
   }
 
   function mapEventToImage(ev: React.MouseEvent<HTMLDivElement, MouseEvent>): { x: number; y: number } | null {
@@ -119,8 +108,8 @@ export function CameraPanel({
       return null;
     }
 
-    const imgX = (cx - layout.offX) / (layout.baseScale * zoom);
-    const imgY = (cy - layout.offY) / (layout.baseScale * zoom);
+    const imgX = (cx - layout.offX) / layout.baseScale;
+    const imgY = (cy - layout.offY) / layout.baseScale;
 
     if (imgX < 0 || imgY < 0 || imgX >= frozenSize.width || imgY >= frozenSize.height) {
       return null;
@@ -133,12 +122,6 @@ export function CameraPanel({
       return;
     }
 
-    if (ev.button === 1) {
-      setDragging(true);
-      setLastPos({ x: ev.clientX, y: ev.clientY });
-      return;
-    }
-
     if (ev.button === 0 || ev.button === 2) {
       ev.preventDefault();
       const mapped = mapEventToImage(ev);
@@ -147,26 +130,6 @@ export function CameraPanel({
       }
       onAddPoint({ x: mapped.x, y: mapped.y, label: ev.button === 0 ? 1 : 0 });
     }
-  }
-
-  function onMouseMove(ev: React.MouseEvent<HTMLDivElement, MouseEvent>) {
-    if (!dragging) {
-      return;
-    }
-    const dx = ev.clientX - lastPos.x;
-    const dy = ev.clientY - lastPos.y;
-    setLastPos({ x: ev.clientX, y: ev.clientY });
-    setPan((p) => ({ x: p.x + dx, y: p.y + dy }));
-  }
-
-  function onMouseUp() {
-    setDragging(false);
-  }
-
-  function onWheel(ev: React.WheelEvent<HTMLDivElement>) {
-    ev.preventDefault();
-    const factor = ev.deltaY < 0 ? 1.1 : 0.9;
-    setZoom((z) => Math.min(6, Math.max(0.3, z * factor)));
   }
 
   async function onUploadTestMode(ev: React.ChangeEvent<HTMLInputElement>) {
@@ -201,8 +164,8 @@ export function CameraPanel({
     if (!layout) {
       return null;
     }
-    const sx = layout.offX + p.x * layout.baseScale * zoom;
-    const sy = layout.offY + p.y * layout.baseScale * zoom;
+    const sx = layout.offX + p.x * layout.baseScale;
+    const sy = layout.offY + p.y * layout.baseScale;
     return (
       <div
         key={`${p.x}-${p.y}-${i}`}
@@ -224,25 +187,20 @@ export function CameraPanel({
         ref={wrapperRef}
         className="camera-canvas"
         onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={onMouseUp}
-        onMouseLeave={onMouseUp}
         onContextMenu={(e) => e.preventDefault()}
-        onWheel={onWheel}
         style={{ aspectRatio: `${displaySize.width} / ${displaySize.height}` }}
       >
         <img
           src={imageUrl}
           className="camera-image"
           alt="camera"
-          style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}
           onLoad={(event) => {
             if (!frozenSize) {
               setSourceSize({ width: event.currentTarget.naturalWidth || 2, height: event.currentTarget.naturalHeight || 3 });
             }
           }}
         />
-        {maskHex ? <img src={maskUrl} className="mask-overlay" alt="sam mask" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }} /> : null}
+        {maskHex ? <img src={maskUrl} className="mask-overlay" alt="sam mask" /> : null}
         {promptMarkers}
       </div>
       <div className="source-switch" role="group" aria-label={translate(language, "cameraSource")}>
@@ -253,7 +211,6 @@ export function CameraPanel({
           {translate(language, "openImage")}
           <input type="file" accept="image/*" onChange={onUploadTestMode} />
         </label>
-        <button type="button" onClick={resetView}>{translate(language, "fitView")}</button>
         {cameraStatus?.mode === "test" ? (
           <button type="button" onClick={onSelectLiveCamera}>
             {translate(language, "returnLive")}

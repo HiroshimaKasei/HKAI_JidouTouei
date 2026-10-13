@@ -53,7 +53,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, .test-upload:fo
 .warn { color: var(--color-warning); font-weight: 600; }
 
 .camera-canvas { position: relative; width: 100%; min-height: 360px; overflow: hidden; border: 1px solid #20282e; border-radius: 4px; background: #141a1d; }
-.camera-image, .mask-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; transform-origin: center center; user-select: none; pointer-events: none; }
+.camera-image, .mask-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; pointer-events: none; }
 .mask-overlay { opacity: 1; mix-blend-mode: normal; }
 .prompt-point { position: absolute; width: 12px; height: 12px; border: 1px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); }
 .prompt-point.positive { background: #18794e; }

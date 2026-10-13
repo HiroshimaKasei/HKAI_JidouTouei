@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Group, Layer, Line, Stage } from "react-konva";
 
@@ -62,6 +62,35 @@ function calcCentroid(sample: SampleData): { x: number; y: number } {
   return { x: sx / all.length, y: sy / all.length };
 }
 
+export function transformedContourBounds(sample: SampleData, overlayScale: number): { centerX: number; centerY: number } | null {
+  const points = [...sample.outerContours, ...sample.holeContours].flat();
+  if (points.length === 0) {
+    return null;
+  }
+
+  const centroid = calcCentroid(sample);
+  const radians = sample.transform.rotationDeg * (Math.PI / 180);
+  const cosine = Math.cos(radians);
+  const sine = Math.sin(radians);
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (const point of points) {
+    const localX = (point[0] - centroid.x) * overlayScale;
+    const localY = (point[1] - centroid.y) * overlayScale;
+    const x = sample.transform.tx + centroid.x + localX * cosine - localY * sine;
+    const y = sample.transform.ty + centroid.y + localX * sine + localY * cosine;
+    minX = Math.min(minX, x);
+    maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y);
+    maxY = Math.max(maxY, y);
+  }
+
+  return { centerX: (minX + maxX) * 0.5, centerY: (minY + maxY) * 0.5 };
+}
+
 export function PdfOverlayPanel({
   pdfSource,
   selectedPage,
@@ -81,6 +110,8 @@ export function PdfOverlayPanel({
   const [middleDragging, setMiddleDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState({ x: 0, y: 0 });
   const [dragMode, setDragMode] = useState<DragMode>({ kind: "none" });
+  const [pendingRecenterSampleId, setPendingRecenterSampleId] = useState<string | null>(null);
+  const [renderedPage, setRenderedPage] = useState(0);
 
   const visibleSamples = useMemo(
     () => samples.filter((s) => s.transform.visible && (s.pageNumber ?? 1) === selectedPage),
@@ -94,6 +125,33 @@ export function PdfOverlayPanel({
     }
     return map;
   }, [visibleSamples]);
+
+  const selectedSample = samples.find((sample) => sample.sampleId === selectedSampleId) ?? null;
+  const selectedBounds = selectedSample ? transformedContourBounds(selectedSample, overlayScale) : null;
+
+  function moveSampleToPageCenter(sample: SampleData) {
+    const bounds = transformedContourBounds(sample, overlayScale);
+    if (!bounds) {
+      return;
+    }
+    onUpdateSample(sample.sampleId, {
+      tx: sample.transform.tx + pageSize.width * 0.5 - bounds.centerX,
+      ty: sample.transform.ty + pageSize.height * 0.5 - bounds.centerY,
+    });
+  }
+
+  useEffect(() => {
+    if (!pendingRecenterSampleId || renderedPage !== selectedPage) {
+      return;
+    }
+    const pendingSample = samples.find((sample) => sample.sampleId === pendingRecenterSampleId);
+    if (!pendingSample || (pendingSample.pageNumber ?? 1) !== selectedPage) {
+      setPendingRecenterSampleId(null);
+      return;
+    }
+    moveSampleToPageCenter(pendingSample);
+    setPendingRecenterSampleId(null);
+  }, [pendingRecenterSampleId, renderedPage, selectedPage, pageSize, samples, overlayScale]);
 
   function onDocLoadSuccess(info: { numPages: number }) {
     setNumPages(info.numPages);
@@ -155,6 +213,19 @@ export function PdfOverlayPanel({
   function onViewportMouseUp() {
     setMiddleDragging(false);
     setDragMode({ kind: "none" });
+  }
+
+  function recenterSelectedContour() {
+    if (!selectedSample || !selectedBounds) {
+      return;
+    }
+    const samplePage = selectedSample.pageNumber ?? 1;
+    if (samplePage !== selectedPage || renderedPage !== selectedPage) {
+      setPendingRecenterSampleId(selectedSample.sampleId);
+      setSelectedPage(samplePage);
+      return;
+    }
+    moveSampleToPageCenter(selectedSample);
   }
 
   function onSampleMouseDown(sample: SampleData, evt: MouseEvent) {
@@ -238,6 +309,7 @@ export function PdfOverlayPanel({
         <span>{translate(language, "page")} {selectedPage}{numPages ? ` / ${numPages}` : ""}</span>
         <button onClick={() => setSelectedPage(Math.min(numPages || selectedPage + 1, selectedPage + 1))} disabled={numPages > 0 && selectedPage >= numPages}>{translate(language, "next")}</button>
         <span>{translate(language, "zoom")} {Math.round(pdfZoom * 100)}%</span>
+        <button type="button" onClick={recenterSelectedContour} disabled={!selectedBounds} title={translate(language, "recenterContour")}>{translate(language, "recenterContour")}</button>
       </div>
       <div
         ref={viewportRef}
@@ -259,7 +331,10 @@ export function PdfOverlayPanel({
               width={1000}
               renderTextLayer={false}
               renderAnnotationLayer={false}
-              onRenderSuccess={(page) => setPageSize({ width: page.width, height: page.height })}
+              onRenderSuccess={(page) => {
+                setPageSize({ width: page.width, height: page.height });
+                setRenderedPage(selectedPage);
+              }}
             />
           </Document> : <div className="pdf-empty">{translate(language, "noPdf")}</div>}
           <div className="overlay-stage-wrap">

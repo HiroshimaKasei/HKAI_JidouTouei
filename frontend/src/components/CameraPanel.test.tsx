@@ -68,24 +68,22 @@ describe("CameraPanel coordinate mapping", () => {
     expect(Math.round(p.y)).toBe(270);
   });
 
-  it("keeps mapping stable after zoom and middle-pan", () => {
+  it("does not handle wheel events or apply camera transforms", () => {
     const onAddPoint = vi.fn();
     const canvas = setup(onAddPoint);
+    const wheel = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: -100 });
 
-    fireEvent.wheel(canvas, { deltaY: -100 });
-    fireEvent.mouseDown(canvas, { button: 1, clientX: 200, clientY: 200 });
-    fireEvent.mouseMove(canvas, { clientX: 220, clientY: 215 });
-    fireEvent.mouseUp(canvas);
+    canvas.dispatchEvent(wheel);
+    expect(wheel.defaultPrevented).toBe(false);
+    expect(screen.queryByRole("button", { name: /fit to view/i })).not.toBeInTheDocument();
+    expect(canvas.querySelector(".camera-image")).not.toHaveStyle({ transform: expect.any(String) });
 
     fireEvent.mouseDown(canvas, { button: 0, clientX: 280, clientY: 260 });
 
     expect(onAddPoint).toHaveBeenCalledTimes(1);
     const p = onAddPoint.mock.calls[0][0] as PromptPoint;
-    expect(p.x).toBeGreaterThan(0);
-    expect(p.y).toBeGreaterThan(0);
-    expect(p.x).toBeLessThan(1000);
-    expect(p.y).toBeLessThan(500);
-
-    expect(screen.getByText(/Middle drag: pan/i)).toBeInTheDocument();
+    expect(Math.round(p.x)).toBe(560);
+    expect(Math.round(p.y)).toBe(270);
+    expect(screen.getByText("Left click: positive. Right click: negative.")).toBeInTheDocument();
   });
 });
