@@ -1,4 +1,8 @@
 :root {
+  --header-height: 60px;
+  --workspace-padding: 12px;
+  --divider-width: 8px;
+  --panel-gap: 10px;
   --color-brand-primary: #3b6846;
   --color-brand-primary-hover: #2e5436;
   --color-brand-accent: #c30d23;
@@ -21,7 +25,7 @@ html, body, #root {
   color: var(--color-text); background: var(--color-background);
 }
 
-.app-root { display: grid; grid-template-rows: 60px minmax(0, 1fr); height: 100%; }
+.app-root { display: grid; grid-template-rows: var(--header-height) minmax(0, 1fr); height: 100%; }
 .topbar { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
 .brand { font-size: 20px; font-weight: 700; margin-right: 10px; white-space: nowrap; }
 .action-btn, button, select, input { font-family: inherit; }
@@ -38,21 +42,21 @@ button:focus-visible, input:focus-visible, select:focus-visible, .test-upload:fo
 .language-switch button { min-height: 30px; padding: 4px 8px; border: 0; border-radius: 0; }
 .language-switch button.active { color: #fff; background: var(--color-brand-primary); }
 
-.layout-grid { display: grid; grid-template-columns: minmax(360px, var(--left-pane-width, 500px)) 8px minmax(560px, 1fr); min-height: 0; padding: 12px; }
-.left-pane, .right-pane { display: flex; flex-direction: column; min-height: 0; gap: 10px; }
-.left-pane { overflow-y: auto; padding-right: 10px; }
-.right-pane { padding-left: 10px; }
-.resize-divider { position: relative; cursor: col-resize; background: transparent; }
+.layout-grid { display: grid; grid-template-columns: minmax(360px, var(--camera-pane-width, 440px)) var(--divider-width) minmax(560px, var(--pdf-pane-width, 760px)) var(--divider-width) minmax(320px, 1fr); min-height: 0; overflow: hidden; padding: var(--workspace-padding); }
+.camera-pane, .pdf-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.camera-pane { padding-right: var(--panel-gap); overflow: auto; }
+.pdf-pane { padding: 0 var(--panel-gap); }
+.resize-divider { position: relative; min-height: 0; cursor: col-resize; background: transparent; touch-action: none; }
 .resize-divider::after { position: absolute; inset: 0 3px; content: ""; background: var(--color-border); }
 .resize-divider:hover::after, .resize-divider:focus-visible::after { background: var(--color-brand-primary); }
 
 .panel { padding: 10px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-surface); box-shadow: 0 1px 3px rgb(32 47 61 / 10%); }
 .panel-title { padding-bottom: 6px; border-bottom: 2px solid var(--color-brand-primary); font-size: 16px; font-weight: 700; }
-.camera-panel, .compact-panel { flex: 0 0 auto; }
+.camera-panel { display: flex; flex: 1 0 auto; flex-direction: column; min-height: 0; }
 .camera-meta { display: flex; justify-content: space-between; margin: 6px 0; font-size: 12px; }
 .warn { color: var(--color-warning); font-weight: 600; }
 
-.camera-canvas { position: relative; width: 100%; min-height: 360px; overflow: hidden; border: 1px solid #20282e; border-radius: 4px; background: #141a1d; }
+.camera-canvas { position: relative; flex: 1 1 auto; width: 100%; min-height: 360px; overflow: hidden; border: 1px solid #20282e; border-radius: 4px; background: #141a1d; }
 .camera-image, .mask-overlay { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; user-select: none; pointer-events: none; }
 .mask-overlay { opacity: 1; mix-blend-mode: normal; }
 .prompt-point { position: absolute; width: 12px; height: 12px; border: 1px solid #fff; border-radius: 50%; transform: translate(-50%, -50%); }
@@ -65,7 +69,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, .test-upload:fo
 .sample-list { display: flex; flex-direction: column; gap: 6px; max-height: 180px; margin-top: 8px; overflow: auto; }
 .sample-item { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 6px; }
 .sample-item.active { padding: 2px; border-radius: 4px; outline: 2px solid #70a9d1; }
-.sample-label { text-align: left; }
+.sample-label { display: flex; align-items: center; min-width: 0; text-align: left; }
+.sample-label::before { width: 10px; height: 10px; margin-right: 6px; border: 1px solid #69737c; border-radius: 50%; background: var(--sample-color); content: ""; }
 .color-swatch { width: 24px; min-width: 24px; height: 24px; padding: 0; border-radius: 4px; }
 .hex-input { width: 88px; }
 .line-preview { width: 56px; height: 0; border-top-style: solid; }
@@ -77,6 +82,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, .test-upload:fo
 .pdf-empty { display: grid; width: 1000px; height: 1300px; place-items: center; color: var(--color-text-muted); background: #fff; }
 .hint { margin-top: 8px; color: var(--color-text-muted); font-size: 12px; }
 .error-text { margin-top: 6px; color: var(--color-error); font-size: 12px; }
+.inspector-panel { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; padding: 10px; }
+.inspector-content { min-height: 0; overflow: auto; padding-top: 6px; }
+.inspector-section { border-bottom: 1px solid var(--color-border); padding: 8px 0; }
+.inspector-section:last-child { border-bottom: 0; }
+.inspector-section summary { cursor: pointer; font-weight: 700; }
+.inspector-section[open] summary { margin-bottom: 6px; color: var(--color-brand-primary-hover); }
+.inspector-primary-actions { position: sticky; top: 0; z-index: 1; padding: 4px 0; background: var(--color-surface); }
+.empty-state { margin: 8px 0; color: var(--color-text-muted); font-size: 14px; }
+
+@media (max-width: 1360px) {
+  .layout-grid { grid-template-columns: minmax(360px, var(--camera-pane-width, 440px)) var(--divider-width) minmax(520px, 1fr); overflow: auto; }
+  .layout-grid > .resize-divider:nth-of-type(2) { display: none; }
+  .inspector-panel { grid-column: 1 / -1; max-height: 360px; margin-top: 10px; }
+}
 
 @media (max-width: 900px) {
   .app-root { grid-template-rows: auto minmax(0, 1fr); }
@@ -84,5 +103,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, .test-upload:fo
   .status-chip { margin-left: 0; }
   .layout-grid { grid-template-columns: 1fr; overflow: auto; }
   .resize-divider { display: none; }
-  .left-pane, .right-pane { overflow: visible; padding: 0; }
+  .camera-pane, .pdf-pane { overflow: visible; padding: 0; }
+  .pdf-pane { min-height: 600px; }
 }

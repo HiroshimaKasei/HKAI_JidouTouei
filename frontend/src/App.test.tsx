@@ -263,3 +263,37 @@ describe("localization", () => {
     expect(translateStatus("en", "Ready")).toBe("Ready");
   });
 });
+
+describe("three-panel workspace layout", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1920 });
+  });
+
+  it("renders three workspace panels and persists clamped keyboard resizing", () => {
+    render(<App />);
+
+    const workspace = document.querySelector(".layout-grid") as HTMLElement;
+    expect(workspace).toHaveStyle({ "--camera-pane-width": "440px", "--pdf-pane-width": "760px" });
+    expect(document.querySelector(".camera-pane")).toBeInTheDocument();
+    expect(document.querySelector(".pdf-pane")).toBeInTheDocument();
+    expect(screen.getByRole("complementary", { name: "編集パネル" })).toBeInTheDocument();
+
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize camera panel" }), { key: "ArrowLeft" });
+    expect(workspace).toHaveStyle({ "--camera-pane-width": "420px" });
+    expect(window.localStorage.getItem("hkai-camera-pane-width")).toBe("420");
+
+    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize camera panel" }), { key: "ArrowLeft", repeat: true });
+    expect(Number.parseInt(workspace.style.getPropertyValue("--camera-pane-width"), 10)).toBeGreaterThanOrEqual(360);
+  });
+
+  it("restores default panel widths", () => {
+    window.localStorage.setItem("hkai-camera-pane-width", "600");
+    window.localStorage.setItem("hkai-pdf-pane-width", "900");
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: "レイアウトをリセット" }));
+    const workspace = document.querySelector(".layout-grid") as HTMLElement;
+    expect(workspace).toHaveStyle({ "--camera-pane-width": "440px", "--pdf-pane-width": "760px" });
+  });
+});

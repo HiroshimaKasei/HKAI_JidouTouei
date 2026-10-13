@@ -17,6 +17,7 @@ const messages = {
     pdfHint: "中ボタンドラッグ: 表示移動。ホイール: カーソル位置で拡大縮小。左ドラッグ: サンプル移動。右ドラッグ: サンプル回転。",
     ready: "準備完了", initializing: "初期化中", runningSam: "SAM推論を実行中...", segmentationUpdated: "セグメンテーションを更新しました", captureFrozen: "撮影を固定しました。SAMプロンプトを追加してください。",
     settings: "設定", sample: "サンプル", language: "言語", samReady: "準備完了", loading: "読み込み中", processing: "処理中", error: "エラー",
+    inspector: "編集パネル", overlaySettings: "オーバーレイ設定", selectSample: "サンプルを選択してください", resetLayout: "レイアウトをリセット",
   },
   en: {
     openPdf: "Open PDF", capture: "Capture", save: "Save", load: "Load", camera: "Camera", segmentation: "Segmentation", samples: "Sample List",
@@ -30,6 +31,7 @@ const messages = {
     pdfHint: "Middle drag: pan viewport. Wheel: zoom around cursor. Left drag sample: move. Right drag sample: rotate.",
     ready: "Ready", initializing: "Initializing", runningSam: "Running SAM inference...", segmentationUpdated: "Segmentation updated", captureFrozen: "Capture frozen. Add SAM prompts.",
     settings: "Settings", sample: "Sample", language: "Language", samReady: "Ready", loading: "Loading", processing: "Processing", error: "Error",
+    inspector: "Inspector", overlaySettings: "Overlay Settings", selectSample: "Select a sample to edit its properties", resetLayout: "Reset Layout",
   },
 } as const;
 

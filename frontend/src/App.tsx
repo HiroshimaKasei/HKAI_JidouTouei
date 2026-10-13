@@ -20,12 +20,18 @@ import {
   uploadTestImage,
 } from "./api";
 import { CameraPanel } from "./components/CameraPanel";
+import { InspectionInspector } from "./components/InspectionInspector";
 import { PdfOverlayPanel, sampleColor } from "./components/PdfOverlayPanel";
 import { translateStatus, useLocale } from "./i18n";
 import type { CameraStatus, PromptPoint, SampleData, SampleStyle } from "./types/models";
 
 const DEFAULT_SAMPLE_STYLE: SampleStyle = { color: "#ff5500", lineType: "solid", widthMm: 0.35 };
 const STYLE_COLORS = ["#ff5500", "#0099ff", "#17a05d", "#c83f7f", "#b68000", "#1e78b7"];
+const DEFAULT_CAMERA_WIDTH = 440;
+const DEFAULT_PDF_WIDTH = 760;
+const MIN_CAMERA_WIDTH = 360;
+const MIN_PDF_WIDTH = 560;
+const MIN_INSPECTOR_WIDTH = 320;
 
 function hexToDataUrl(hex: string, mime = "image/png"): string {
   const bytes = hex.match(/.{1,2}/g)?.map((b) => String.fromCharCode(parseInt(b, 16))).join("") ?? "";
@@ -86,17 +92,35 @@ export function App() {
   const activePredictTokenRef = useRef(0);
 
   const [isDirty, setIsDirty] = useState(false);
-  const [leftPaneWidth, setLeftPaneWidth] = useState(() => Number(window.localStorage.getItem("hkai-left-pane-width")) || 500);
+  const [panelWidths, setPanelWidths] = useState(() => ({
+    camera: Number(window.localStorage.getItem("hkai-camera-pane-width")) || DEFAULT_CAMERA_WIDTH,
+    pdf: Number(window.localStorage.getItem("hkai-pdf-pane-width")) || DEFAULT_PDF_WIDTH,
+  }));
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
 
   const projectIdRef = useRef(makeProjectId());
 
   useEffect(() => {
-    window.localStorage.setItem("hkai-left-pane-width", String(leftPaneWidth));
-  }, [leftPaneWidth]);
+    window.localStorage.setItem("hkai-camera-pane-width", String(panelWidths.camera));
+    window.localStorage.setItem("hkai-pdf-pane-width", String(panelWidths.pdf));
+  }, [panelWidths]);
 
-  function startResizeDivider(event: React.PointerEvent<HTMLDivElement>) {
+  function clampPanelWidths(camera: number, pdf: number) {
+    const available = Math.max(0, window.innerWidth - 40);
+    const maxCamera = Math.max(MIN_CAMERA_WIDTH, available - MIN_PDF_WIDTH - MIN_INSPECTOR_WIDTH);
+    const nextCamera = Math.min(Math.max(camera, MIN_CAMERA_WIDTH), maxCamera);
+    const maxPdf = Math.max(MIN_PDF_WIDTH, available - nextCamera - MIN_INSPECTOR_WIDTH);
+    return { camera: nextCamera, pdf: Math.min(Math.max(pdf, MIN_PDF_WIDTH), maxPdf) };
+  }
+
+  function startResizeDivider(divider: "camera" | "pdf", event: React.PointerEvent<HTMLDivElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
-    const onMove = (moveEvent: PointerEvent) => setLeftPaneWidth(Math.max(360, Math.min(window.innerWidth - 560, moveEvent.clientX)));
+    const gridLeft = event.currentTarget.parentElement?.getBoundingClientRect().left ?? 0;
+    const onMove = (moveEvent: PointerEvent) => setPanelWidths((current) => {
+      const camera = divider === "camera" ? moveEvent.clientX - gridLeft - 12 : current.camera;
+      const pdf = divider === "pdf" ? moveEvent.clientX - gridLeft - 20 - current.camera : current.pdf;
+      return clampPanelWidths(camera, pdf);
+    });
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
@@ -104,6 +128,23 @@ export function App() {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
   }
+
+  function onDividerKeyDown(divider: "camera" | "pdf", event: React.KeyboardEvent<HTMLDivElement>) {
+    const delta = event.key === "ArrowLeft" ? -20 : event.key === "ArrowRight" ? 20 : 0;
+    if (!delta) return;
+    event.preventDefault();
+    setPanelWidths((current) => clampPanelWidths(divider === "camera" ? current.camera + delta : current.camera, divider === "pdf" ? current.pdf + delta : current.pdf));
+  }
+
+  function resetLayout() {
+    setPanelWidths({ camera: DEFAULT_CAMERA_WIDTH, pdf: DEFAULT_PDF_WIDTH });
+  }
+
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -593,14 +634,13 @@ export function App() {
   }
 
   const hasSegCandidates = candidateMasks.length > 0;
-  const selectedSample = samples.find((sample) => sample.sampleId === selectedSampleId) ?? null;
-
   const selectedMaskDataUrl = useMemo(() => {
     if (!maskPreviewHex) {
       return "";
     }
     return hexToDataUrl(maskPreviewHex);
   }, [maskPreviewHex]);
+  const renderedPanelWidths = useMemo(() => clampPanelWidths(panelWidths.camera, panelWidths.pdf), [panelWidths, viewportWidth]);
 
   return (
     <div className="app-root">
@@ -613,6 +653,7 @@ export function App() {
         <button className="action-btn primary-action" onClick={onCapture}>{t("capture")}</button>
         <button className="action-btn" onClick={onSaveProject}>{t("save")}</button>
         <button className="action-btn" onClick={onLoadProject}>{t("load")}</button>
+        <button className="action-btn layout-reset" onClick={resetLayout}>{t("resetLayout")}</button>
         <div className="status-chip">{gpuStatus}</div>
         <div className="status-chip" aria-live="polite">{translateStatus(language, statusText)}</div>
         <div className="language-switch" role="group" aria-label={t("language")}>
@@ -621,8 +662,8 @@ export function App() {
         </div>
       </header>
 
-      <main className="layout-grid" style={{ "--left-pane-width": `${leftPaneWidth}px` } as React.CSSProperties}>
-        <section className="left-pane">
+      <main className="layout-grid" style={{ "--camera-pane-width": `${renderedPanelWidths.camera}px`, "--pdf-pane-width": `${renderedPanelWidths.pdf}px` } as React.CSSProperties}>
+        <section className="camera-pane">
           <CameraPanel
             frozenImageHex={frozenImageHex}
             frozenSize={frozenSize}
@@ -635,130 +676,11 @@ export function App() {
             onReturnToLive={onReturnToLive}
             language={language}
           />
-
-          <div className="panel compact-panel">
-            <div className="panel-title">{t("segmentation")}</div>
-            <div className="control-row">
-              <button onClick={onUndoPrompt} disabled={prompts.length === 0 || isPredicting}>{t("undo")}</button>
-              <button onClick={onResetPrompts} disabled={isPredicting}>{t("resetPrompts")}</button>
-              <button onClick={onRedoSegmentation} disabled={isPredicting}>{t("redo")}</button>
-            </div>
-            <div className="control-row">
-              <button className="primary-action" onClick={onAcceptMask} disabled={!hasSegCandidates || isPredicting || !hasLatestPrediction}>{t("acceptMask")}</button>
-              <button onClick={onCancelSegmentation}>{t("cancel")}</button>
-            </div>
-            <div className="control-row">
-              <label>{t("candidate")}</label>
-              <select
-                value={selectedCandidateIndex}
-                onChange={(e) => {
-                  const idx = Number(e.target.value);
-                  setSelectedCandidateIndex(idx);
-                  setMaskPreviewHex(candidateMasks[idx] ?? "");
-                }}
-                disabled={isPredicting || candidateScores.length === 0}
-              >
-                {candidateScores.map((score, idx) => (
-                  <option key={idx} value={idx}>
-                    {idx + 1} ({score.toFixed(3)})
-                  </option>
-                ))}
-              </select>
-            </div>
-            {selectedMaskDataUrl ? <img className="mini-mask-preview" src={selectedMaskDataUrl} alt="selected mask" /> : null}
-          </div>
-
-          {selectedSample ? (
-            <div className="panel compact-panel line-properties">
-              <div className="panel-title">{t("lineProperties")}</div>
-              <div className="control-row">
-                <input
-                  aria-label={t("lineColor")}
-                  type="color"
-                  value={selectedSample.style.color}
-                  onChange={(e) => updateSampleStyle(selectedSample.sampleId, { color: e.target.value })}
-                />
-                {STYLE_COLORS.map((color) => (
-                  <button
-                    key={color}
-                    className="color-swatch"
-                    aria-label={`Set color ${color}`}
-                    title={color}
-                    style={{ backgroundColor: color }}
-                    onClick={() => updateSampleStyle(selectedSample.sampleId, { color })}
-                  />
-                ))}
-                <input
-                  aria-label="HEX color"
-                  className="hex-input"
-                  value={selectedSample.style.color}
-                  pattern="^#[0-9a-fA-F]{6}$"
-                  onChange={(e) => updateSampleStyle(selectedSample.sampleId, { color: e.target.value })}
-                />
-              </div>
-              <div className="control-row">
-                <select
-                  aria-label={t("lineType")}
-                  value={selectedSample.style.lineType}
-                  onChange={(e) => updateSampleStyle(selectedSample.sampleId, { lineType: e.target.value as SampleStyle["lineType"] })}
-                >
-                  <option value="solid">{t("solid")}</option>
-                  <option value="dashed">{t("dashed")}</option>
-                  <option value="dash_dot">{t("dashDot")}</option>
-                </select>
-                <label>
-                  {t("lineThickness")} (mm)
-                  <input
-                    aria-label="Line width in millimetres"
-                    type="number"
-                    min="0.01"
-                    max="10"
-                    step="0.01"
-                    value={selectedSample.style.widthMm}
-                    onChange={(e) => updateSampleStyle(selectedSample.sampleId, { widthMm: Math.max(0.01, Number(e.target.value) || 0.35) })}
-                  />
-                </label>
-                <span className={`line-preview ${selectedSample.style.lineType}`} style={{ borderColor: selectedSample.style.color, borderWidth: `${Math.max(1, selectedSample.style.widthMm * 3)}px` }} />
-              </div>
-              <div className="control-row">
-                <button onClick={() => applyStyleToAll(selectedSample.style)}>{t("applyAll")}</button>
-                <button onClick={() => updateSampleStyle(selectedSample.sampleId, { ...DEFAULT_SAMPLE_STYLE, color: sampleColor(samples.indexOf(selectedSample)) })}>{t("restoreDefaults")}</button>
-              </div>
-            </div>
-          ) : null}
-
-          <div className="panel compact-panel">
-            <div className="panel-title">{t("samples")}</div>
-            <div className="sample-list">
-              {samples.map((s) => (
-                <div key={s.sampleId} className={selectedSampleId === s.sampleId ? "sample-item active" : "sample-item"}>
-                  <button className="sample-label" onClick={() => setSelectedSampleId(s.sampleId)}>
-                    {t("sample")} {s.sampleId} (P{s.pageNumber})
-                  </button>
-                  <button onClick={() => updateSample(s.sampleId, { visible: !s.transform.visible })}>{s.transform.visible ? t("hide") : t("show")}</button>
-                  <button onClick={() => deleteSample(s.sampleId)}>{t("delete")}</button>
-                </div>
-              ))}
-            </div>
-            <div className="control-row">
-              <button onClick={redoSelectedSample} disabled={!selectedSampleId || isPredicting}>{t("redoSegmentation")}</button>
-              <label>
-                {t("overlayScale")}
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={overlayScale}
-                  onChange={(e) => setOverlayScale(Number(e.target.value) || 1)}
-                />
-              </label>
-            </div>
-          </div>
         </section>
 
-        <div className="resize-divider" role="separator" aria-orientation="vertical" aria-label="Resize workspace" onPointerDown={startResizeDivider} />
+        <div className="resize-divider" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Resize camera panel" onPointerDown={(event) => startResizeDivider("camera", event)} onKeyDown={(event) => onDividerKeyDown("camera", event)} />
 
-        <section className="right-pane">
+        <section className="pdf-pane">
           <PdfOverlayPanel
             pdfSource={pdfSource}
             selectedPage={selectedPage}
@@ -771,6 +693,16 @@ export function App() {
             language={language}
           />
         </section>
+        <div className="resize-divider" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Resize PDF workspace" onPointerDown={(event) => startResizeDivider("pdf", event)} onKeyDown={(event) => onDividerKeyDown("pdf", event)} />
+        <InspectionInspector
+          language={language} prompts={prompts.length} isPredicting={isPredicting} hasSegCandidates={hasSegCandidates} hasLatestPrediction={hasLatestPrediction}
+          candidateScores={candidateScores} selectedCandidateIndex={selectedCandidateIndex} selectedMaskDataUrl={selectedMaskDataUrl}
+          samples={samples} selectedSampleId={selectedSampleId} overlayScale={overlayScale} styleColors={STYLE_COLORS} defaultStyle={DEFAULT_SAMPLE_STYLE}
+          onUndoPrompt={onUndoPrompt} onResetPrompts={onResetPrompts} onRedoSegmentation={onRedoSegmentation} onAcceptMask={onAcceptMask} onCancelSegmentation={onCancelSegmentation}
+          onSelectCandidate={(index) => { setSelectedCandidateIndex(index); setMaskPreviewHex(candidateMasks[index] ?? ""); }} onSelectSample={setSelectedSampleId}
+          onUpdateSample={updateSample} onUpdateSampleStyle={updateSampleStyle} onApplyStyleToAll={applyStyleToAll} onDeleteSample={deleteSample}
+          onRedoSelectedSample={redoSelectedSample} onSetOverlayScale={setOverlayScale}
+        />
       </main>
     </div>
   );
