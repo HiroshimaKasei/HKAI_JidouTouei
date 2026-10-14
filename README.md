@@ -1,230 +1,126 @@
 # AI自動投影
 
-Factory-side PDF overlay alignment using camera capture, interactive SAM segmentation, contour export, and editable project save/load.
+**AI Automatic Projection Inspection** — A Windows-based camera/SAM-to-PDF overlay workstation for production profile inspection, with a browser interface accessible from authorized company LAN computers.
 
-## Scope implemented
+> This README documents the **uploaded repository snapshot**. For development contracts, read [`AGENTS.md`](AGENTS.md); for file/data/control flow, read [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Known issues and unimplemented plans are in [`docs/REVIEW_NOTES.md`](docs/REVIEW_NOTES.md).
 
-- Local/LAN architecture: FastAPI backend serves API and production frontend from one Windows PC.
-- PDF viewing (PDF.js via react-pdf): page selection, pan, zoom.
-- Camera panel with live preview polling, capture freeze, and explicit TEST MODE image upload.
-- Interactive click prompting for SAM (positive/negative points), undo/reset/redo prompt flow, candidate selection, accept mask.
-- Mask acceptance pipeline: binary mask preservation, contour extraction with holes, black-white contour PNG, transparent contour PNG, DXF LWPOLYLINE export with Y inversion.
-- Overlay samples on PDF with independent per-sample translate/rotate/visibility/color.
-- Multiple samples per PDF page.
-- Project save/load to local folders with editable state.
-- Single active operator session lock for mutating inspection actions.
+## What the application does
 
-## Repository structure
+The central factory PC acquires frames from an Imaging Source DFK 33UX178 camera, rotates them **90° clockwise by default**, and displays the full portrait view without camera zoom. The operator freezes a full-resolution image, adds positive and negative SAM prompts, reviews segmentation candidates, accepts contours (including holes), and positions the contours over a source PDF drawing. Saved samples keep translation, rotation, visibility, a page number and per-sample line styles (solid/dashed/dash-dot, color and width in mm).
 
-- backend/app/main.py: FastAPI app and router registration.
-- backend/app/routers/: camera, SAM, project, health endpoints.
-- backend/app/services/: camera, SAM, contour/DXF, project persistence services.
-- backend/tests/: focused backend unit tests.
-- frontend/src/App.tsx: operator workflow and state orchestration.
-- frontend/src/components/CameraPanel.tsx: camera/prompt interaction view.
-- frontend/src/components/PdfOverlayPanel.tsx: PDF render and Konva overlays.
-- start.bat: local startup helper.
+The current UI uses **Camera | PDF Overlay | Inspector** resizable panels. Languages: Japanese (default) and English. The application is named **AI自動投影** in both. The *PDF* workspace supports zoom and pan; the *camera* viewer does not.
 
-## Requirements
+### Features available in this snapshot
 
-- Windows 11
-- Python 3.11 recommended
-- Node.js 20+ (for frontend build/dev)
-- SAM ViT-B checkpoint file
+- React 18 + Vite + TypeScript, `react-pdf`/PDF.js and React-Konva.
+- FastAPI backend with ImagingControl4 camera service, official SAM ViT-B and OpenCV contour extraction.
+- Live/test image switching, full-resolution capture, click prompting and SAM candidate selection.
+- PDF overlay sample move/rotate, per-sample styles, multi-page assignments, sample selection and previous-sample placement inheritance.
+- Local project save/load and backend `.hkai` ZIP archive import/export; source PDF, PNG captures/masks, DXF and `result.pdf` vector output.
+- Single active operator lease; LAN allowlist; one-click Windows daily launch.
 
-## Setup
+### Not available yet
 
-1. Create/install Python environment (3.11):
+Google Drive OAuth, Shared Drive browsing/synchronization, administrator authentication, stable PDF-native coordinate migration, and a frontend `.hkai` import button. A backend `/api/project/import` endpoint exists, but the current Load button lists local projects and prompts for an ID. See [Review Notes](docs/REVIEW_NOTES.md).
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
+## Hardware and software
+
+- Main machine: **Windows 11**, Python **3.11 recommended**, Node.js **20+** for building.
+- Imaging Source **DFK 33UX178** camera and matching ImagingControl4 driver/SDK for camera work. Tests without hardware cannot verify USB acquisition.
+- SAM ViT-B checkpoint: `models/sam_vit_b_01ec64.pth` (not committed).
+- Torch 2.9 dependency and a suitable CUDA build/driver for the GPU; if unavailable, `SAM_DEVICE=auto` falls back to CPU. Do not assume a CPU installation has GPU acceleration.
+
+## First-time Windows installation
+
+From the repository root:
+
+1. Install Python 3.11 and Node.js 20+.
+2. Run **`prepare_lan.bat`** (creates `.venv`, installs Python packages, downloads frontend npm packages if absent, builds production React frontend).
+3. On the main camera PC, verify ImagingControl4 Python bindings in the project's venv (they are **not** included in `backend/requirements.txt` in this snapshot):
+
+   ```powershell
+   .\.venv\Scripts\python.exe -m pip install imagingcontrol4
+   .\.venv\Scripts\python.exe -c "import imagingcontrol4 as ic4; ic4.Library.init(); print(ic4.DeviceEnum.devices())"
+   ```
+
+4. Put the official SAM checkpoint at `models/sam_vit_b_01ec64.pth` and verify PyTorch's CPU/CUDA setup.
+5. Run **`create_desktop_shortcut.bat`** once. It creates `AI自動投影.lnk` on the current user's Windows desktop.
+
+> Follow company security rules for software installation and camera access. The ZIP archive does not contain the trained SAM weights.
+
+## Daily operation
+
+- Main PC: double-click **AI自動投影** desktop shortcut (or `launch_operator.bat`). It starts the prepared FastAPI server when needed and opens `http://127.0.0.1:8000`.
+- Other approved company PC: open `http://<MAIN-PC-LAN-IP>:8000` in a browser. They need no Python, Node.js or camera drivers.
+- Stop: `stop_operator.bat` on the server PC; closing a browser tab alone does not stop the backend.
+- After source code/dependency updates: rerun `prepare_lan.bat` before `launch_operator.bat`.
+- Dev server: `start.bat` launches development mode (frontend Vite port 5173, backend port 8000). Production uses port 8000 for both API and built frontend.
+
+### Operator inspection flow
+
+1. Select **Open PDF / PDFを開く** and choose a source drawing.
+2. Inspect live camera or **Open Image / 画像を開く**, then **Capture / 撮影**.
+3. On frozen image, left click to add positive prompts; right click for negative prompts; select a SAM candidate and **Accept Mask / マスクを確定**.
+4. In the center PDF, drag accepted samples to translate, right-drag to rotate. New samples inherit the **previous sample's position/rotation**; don't auto-center them.
+5. In the right inspector, choose sample visibility, line colors, solid/dashed/dash-dot type and width, plus the existing overlay scale.
+6. **Save / 保存** persists to the main PC's `data/projects/<project_id>/`. Backend produces `result.pdf` and `<project_id>.hkai` when possible. These are retrievable through backend URLs, not yet a full export UI.
+7. **Load / 読み込み** reloads a local project by ID. The backend has `.hkai` import API support but the current frontend has no archive file-picker.
+
+**Warning:** The current **Recenter Contour** control changes persisted sample translation rather than viewport pan. It is a known discrepancy from the intended view-only behavior. Check alignment after using it until corrected.
+
+## Repository map
+
+```text
+frontend/src/
+  App.tsx                      main workflow/state, three-pane layout
+  api.ts                      FastAPI calls and operator token
+  i18n.ts                     Japanese/English dictionary
+  types/models.ts             sample/line-style types
+  components/
+    CameraPanel.tsx           live/captured view and SAM prompt mapping
+    PdfOverlayPanel.tsx       PDF.js, Konva overlay, recenter/drag/rotate
+    InspectionInspector.tsx   SAM controls, samples, line styles
+  styles.css                  corporate colors, resizing, responsive layout
+backend/
+  app/main.py                 FastAPI app, LAN gate, static assets
+  app/routers/                camera, SAM, project, session and health
+  app/services/               camera, SAM, contour/DXF, PDF export, project, lock
+  app/schemas/models.py       Pydantic project payloads
+  run_server.py               production uvicorn entrypoint
+  tests/                      pytest tests
+prepare_lan.bat               one-time setup/build
+launch_operator.bat            daily launcher
+create_desktop_shortcut.bat    Windows shortcut
+stop_operator.bat              stop launcher-managed backend
 ```
 
-2. Install frontend dependencies:
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full sequence, saved project structure, endpoints and coordinate rules.
 
-```powershell
-npm --prefix frontend install
-```
+## Configuration
 
-3. Download SAM checkpoint:
+| Variable | Meaning |
+|---|---|
+| `SAM_DEVICE` | `auto` (default), `cpu`, or `cuda` |
+| `HKAI_HOST` | Production listen address; default `0.0.0.0` |
+| `HKAI_PORT` | Production port; default `8000` |
+| `HKAI_TRUSTED_LAN_CIDRS` | Allowed client IP networks; defaults include RFC1918 ranges and loopback — restrict to real company subnets |
+| `HKAI_OPERATOR_LOCK_TTL_SECONDS` | Operator lease TTL (default 300 seconds) |
+| `VITE_API_BASE` | Optional frontend API override; production normally uses same origin |
 
-- Put the official ViT-B checkpoint at:
-	- models/sam_vit_b_01ec64.pth
-
-4. Select SAM device mode (default is auto):
-
-```powershell
-# auto: use CUDA if available, else CPU
-$env:SAM_DEVICE="auto"
-
-# force CPU
-$env:SAM_DEVICE="cpu"
-
-# force CUDA (errors if CUDA is unavailable)
-$env:SAM_DEVICE="cuda"
-```
-
-5. Development mode (localhost):
-
-```powershell
-start.bat
-```
-
-6. Production LAN mode (single server on main PC):
-
-```powershell
-prepare_lan.bat
-```
-
-Notes:
-
-- Run `prepare_lan.bat` once after installation or updates. It creates the venv, installs dependencies, and builds the production frontend.
-- Run `create_desktop_shortcut.bat` once to create the `AI自動投影` desktop shortcut. The shortcut runs `launch_operator.bat`, which starts the prepared server only when needed, waits for `/api/health/`, then opens the browser.
-- `stop_operator.bat` stops the launcher-managed server. Logs are in `logs/server.log` and `logs/server-error.log`.
-- `start_lan.bat` remains the compatibility full prepare-and-launch command.
-- The production server is bound to `0.0.0.0` but protected by `HKAI_TRUSTED_LAN_CIDRS`; it is not an internet-facing deployment.
-- Startup prints local and detected LAN URL(s), for example `http://192.168.x.x:8000`.
-- Client PCs only need a browser. They do not need Python, Node.js, or camera drivers.
-- All project files remain stored on the main server PC under `data/projects/`.
-
-For other approved LAN PCs, create a browser shortcut with the detected server URL, for example `http://192.168.10.25:8000`. Do not forward this port on a router or enable a Public-profile firewall rule.
-
-Or manually:
-
-```powershell
-cd backend
-python run_server.py
-```
-
-```powershell
-cd frontend
-npm run dev
-```
-
-Environment variables used by LAN mode:
-
-- `HKAI_HOST` (default `0.0.0.0`)
-- `HKAI_PORT` (default `8000`)
-- `HKAI_TRUSTED_LAN_CIDRS` (default private ranges + loopback)
-- `HKAI_OPERATOR_LOCK_TTL_SECONDS` (default `300`)
-
-## LAN security and firewall
-
-- The server rejects requests whose client IP is outside `HKAI_TRUSTED_LAN_CIDRS`.
-- CORS remains restricted to local dev origins (`127.0.0.1:5173`, `localhost:5173`) and is not wildcard.
-- For LAN use, do not expose this host/port to the public internet.
-
-Recommended Windows Firewall inbound rule (main server PC):
-
-1. Open `Windows Defender Firewall with Advanced Security`.
-2. Create a new `Inbound Rule` for `TCP` port `8000` (or your `HKAI_PORT`).
-3. Set `Action` to `Allow the connection`.
-4. Apply only to `Domain` profile (and `Private` if needed).
-5. In `Scope`, set `Remote IP address` to `These IP addresses` and add only your company subnet(s), for example `192.168.10.0/24`.
-6. Do not enable the rule for `Public` profile.
-
-## Multi-user safety
-
-- Opening the page is view-only and does not claim an operator lock. The first mutating action claims the lock.
-- Only one active inspection operator token is allowed at a time; it is bound to an individual browser tab as well as client IP, so another tab on the same factory PC cannot silently take control.
-- Mutating operations (`capture`, `SAM prepare/predict/accept`, project save, test-image updates) require that token.
-- Other browser sessions can view data but cannot overwrite active inspection state until the lock expires or is released.
-
-## Camera Source Switching
-
-- Use `Live Camera` or `Open Image` in the camera panel to choose a source. `Return to Live Preview` clears the uploaded image through `POST /api/camera/test-image/clear` and restarts IC4 acquisition.
-- Switching source confirms before discarding an unfinished frozen capture. It clears prompts, preview masks, capture IDs, and pending prediction results while preserving accepted samples.
-
-## SAM runtime policy and verification
-
-- Official Meta SAM ViT-B is used in all modes.
-- `SAM_DEVICE=auto` uses CUDA when operational and falls back to CPU when CUDA is unavailable.
-- `SAM_DEVICE=cpu` forces CPU and does not call CUDA functions.
-- `SAM_DEVICE=cuda` requires working CUDA and reports clear errors if unavailable.
-- The SAM checkpoint is loaded once per backend process and reused.
-- Per-capture image embeddings are cached and reused for prompt refinement.
-
-Suggested command to validate GPU in your environment:
-
-```powershell
-python -c "import torch; print(torch.cuda.is_available(), torch.cuda.get_device_name(0), torch.cuda.get_device_capability(0), torch.version.cuda, torch.__version__)"
-```
-
-For RTX 5070 target workflow, use a CUDA/PyTorch build that supports Blackwell architecture on your machine/driver stack.
-
-## API summary
-
-- GET /api/health/
-- GET /api/session/status
-- POST /api/session/claim
-- POST /api/session/heartbeat
-- POST /api/session/release
-- GET /api/camera/status
-- GET /api/camera/frame
-- POST /api/camera/test-image
-- POST /api/camera/test-image/clear
-- POST /api/camera/capture
-- POST /api/sam/register-image
-- POST /api/sam/prepare
-- POST /api/sam/predict
-- POST /api/sam/accept
-- GET /api/project/list
-- POST /api/project/save
-- GET /api/project/load/{project_id}
-- GET /api/project/{project_id}/source.pdf
-- GET /api/project/{project_id}/samples/{sample_id}/{name}
-
-## Project storage
-
-Saved under:
-
-data/projects/<project_id>/
-
-Includes:
-
-- source.pdf
-- project.json
-- samples/<sample_id>/capture.png
-- samples/<sample_id>/mask.png
-- samples/<sample_id>/contour_bw.png
-- samples/<sample_id>/contour.dxf
-
-Notes:
-
-- DXF coordinates are unitless pixel-derived values.
-- Y-axis inversion is applied for Cartesian export.
+Bind LAN port 8000 only within approved company network segments and scope Windows Firewall rules accordingly. The CIDR gate and operator lock are **not** user authentication. Never expose the app to the public Internet.
 
 ## Tests
 
-Run backend tests:
+Run in the repo root after installing the relevant dependencies:
 
 ```powershell
-python -m pytest backend/tests -q
+.\.venv\Scripts\python.exe -m pytest backend/tests -q
+npm.cmd --prefix frontend run test
+npm.cmd --prefix frontend run build
 ```
 
-Covered:
+**Audit of uploaded ZIP:** backend pytest **14 passed** (Python 3.13 review environment, without physical IC4 camera); frontend tests/build could not be rerun because npm packages were unavailable offline. These are environment-limited findings, not an assertion that production hardware has been validated.
 
-- contour extraction includes holes and output files
-- DXF generation path
-- project JSON save/load roundtrip
+## Development guidance
 
-## Current limitations
-
-- IC4 camera service is scaffolded with explicit TEST MODE fallback; the exact DFK 33UX178 acquisition call path is not fully hardware-validated in this environment.
-- Frontend build/test execution requires Node.js/npm to be installed locally.
-- Python 3.11 is required for target runtime; this development environment executed tests on Python 3.10.
-- PDF placement remains compatible with the existing display-coordinate projects; vector export converts saved line widths from millimetres to PDF points.
-
-## Out of scope intentionally excluded
-
-- ChArUco calibration
-- millimeter measurements
-- automatic alignment
-- OK/NG inspection
-- cloud storage
-- database server
-- concurrent multi-operator editing
-- non-SAM segmentation models
+Agent instructions: [`AGENTS.md`](AGENTS.md). Architecture and API: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). Verified gaps and proposed priorities: [`docs/REVIEW_NOTES.md`](docs/REVIEW_NOTES.md). The repository root and internal API names remain `HKAI_*` for compatibility, even though the displayed application name is **AI自動投影**.
