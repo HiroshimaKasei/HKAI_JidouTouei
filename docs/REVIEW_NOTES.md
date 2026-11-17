@@ -7,11 +7,9 @@ Audit basis: uploaded `HKAI_JidouTouei-main (1).zip`, inspected in the current c
 - `PYTHONPATH=backend python -m pytest backend/tests -q` → **14 passed**, 2 FastAPI `@app.on_event` deprecation warnings; review machine used Python 3.13 and CPU Torch, not the target Windows/DFK hardware environment.
 - `npm ci --prefix frontend --offline --no-audit --no-fund` → **could not complete**, missing `yallist-3.1.1.tgz` from local npm cache. Frontend Vitest/build **not executed** in this review. Run `npm ci`, `npm --prefix frontend run test`, `npm --prefix frontend run build` on a connected/provisioned development PC.
 
-## P0: Recenter is destructive (verified directly from source)
+## Resolved: destructive recenter
 
-- File: `frontend/src/components/PdfOverlayPanel.tsx` — `moveSampleToPageCenter()` uses `onUpdateSample(sampleId,{tx,ty})`, called by `recenterSelectedContour()`.
-- Test `frontend/src/components/PdfOverlayPanel.test.tsx` explicitly asserts the mutation.
-- Requested contract from operator: **button only pans view to locate contour**, preserving sample placement, zoom, export geometry and saved project. Current behavior instead changes placement. Fix code + test together; compute transformed contour center, then set `viewportPan` to put it in the visible panel center. Do not move sample or change `pdfZoom`. Handle other pages after render.
+- The previous implementation changed saved translation. Recenter now pans the viewport to the transformed contour center, including after a page switch, without changing sample geometry or zoom. Regression tests cover both cases.
 
 ## P1: PDF-native coordinates and export verification
 
@@ -22,8 +20,8 @@ Audit basis: uploaded `HKAI_JidouTouei-main (1).zip`, inspected in the current c
 ## P1: Expose .hkai and PDF artifacts to operators
 
 - Backend: `/api/project/import`, `/result.pdf`, `/{id}.hkai` exist. `.hkai` archive creation/import and SHA checksums implemented.
-- UI `onLoadProject()` only displays an ID prompt for local projects and does not upload an `.hkai` file.
-- `frontend/src/api.ts:saveProject` ignores backend `result_pdf_url`, `archive_url`, and `export_error`; UI always says `Project saved` even when PDF export failed. Improve status and provide deliberate Download PDF/Archive or Import Archive actions after checking server response.
+- Local project IDs are now selected in a picker; `.hkai` file upload is still not exposed in the UI.
+- The save UI now reports a returned `export_error`, but does not offer Download PDF/Archive or Import Archive actions. Local save does not itself guarantee a PDF exists.
 
 ## P1: Google Drive and security features missing
 
@@ -31,7 +29,7 @@ Audit basis: uploaded `HKAI_JidouTouei-main (1).zip`, inspected in the current c
 
 ## P2: Camera input and hardware checks
 
-- `frontend/src/components/CameraPanel.tsx:onUploadTestMode` sets `ev.currentTarget.value` **after an `await`**. Capture the input element before awaiting to avoid unavailable `currentTarget` in asynchronous handlers. Add upload/same-file-selection test.
+- `frontend/src/components/CameraPanel.tsx:onUploadTestMode` now retains the input element before awaiting so its value can be reset after upload.
 - `backend/app/services/camera_service.py` rotates 90° by default and handles live/test source switching; test IC4 acquisition/reconnect race on the real DFK 33UX178 with rapid switching. Installation file `backend/requirements.txt` lacks `imagingcontrol4`.
 - Camera orientation is in-memory and not currently a persisted operator setting. Avoid double rotation when reopening saved images.
 

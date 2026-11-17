@@ -15,7 +15,8 @@ Build a reliable, approachable Windows 11 factory workstation for overlaying a c
 | Main inspection workflow, sample inheritance, save/load | `frontend/src/App.tsx` |
 | Camera display and SAM click-to-pixel mapping | `frontend/src/components/CameraPanel.tsx` |
 | PDF.js rendering, Konva overlay, drag/rotate, recenter | `frontend/src/components/PdfOverlayPanel.tsx` |
-| Right-hand segmentation / sample / style controls | `frontend/src/components/InspectionInspector.tsx` |
+| Camera-side segmentation controls | `frontend/src/components/SegmentationControls.tsx` |
+| Right-hand sample / style controls | `frontend/src/components/InspectionInspector.tsx` |
 | UI languages / labels (Japanese first) | `frontend/src/i18n.ts` |
 | Three-pane CSS, breakpoints and colors | `frontend/src/styles.css` |
 | API client and operator token | `frontend/src/api.ts` |
@@ -39,7 +40,7 @@ More detailed flow diagrams, endpoints, coordinate spaces and file layouts are i
 3. **SAM prompts:** Left click = positive (1); right click = negative (0) on a frozen capture. Store coordinates in oriented capture-image pixels, not CSS pixels. Account for `object-fit: contain` offsets. Changing panel widths must not shift prompt or mask alignment.
 4. **State:** `App.tsx` orchestrates SAM prompts, candidates, selected sample, frozen capture and project state. Keep a single source of truth. Invalidate stale asynchronous predictions on image/source changes; do not remove accepted samples when returning to live mode.
 5. **Sample inheritance:** When accepting a *new* contour, inherit **previous sample translation, rotation and scale behavior** exactly as implemented. Replacing an existing sample preserves its placement and style. Never auto-center newly accepted samples.
-6. **Recenter intent vs current code:** The product requirement is **viewport-only navigation** (no sample movement). In this snapshot, the code currently violates it: `PdfOverlayPanel.moveSampleToPageCenter()` calls `onUpdateSample` and changes `tx/ty`; its test also expects that. Treat as a **known bug**; update code/tests together when fixing, and do not silently redefine the intended behavior.
+6. **Recenter:** Recenter is **viewport-only navigation**. It must not change sample `tx/ty`, rotation, scale or PDF zoom. Preserve the cross-page regression tests.
 7. **Drawing transforms:** Raw SAM contour points and prompts are image pixels; `SampleTransform.tx/ty/rotationDeg`, `overlayScale` and PDF viewport pan/zoom are different concerns. Do not mix viewing transformations with persisted geometry. The current renderer uses a **1000 px display-page width**; PDF-native placement migration is NOT completed.
 8. **Style:** Per-sample `SampleStyle` stores `color`, `lineType` (`solid`, `dashed`, `dash_dot`), and `widthMm`. Preserve legacy `transform.color` migration and use consistent previews and PDF exports.
 9. **Saving:** Keep the original `source.pdf` and project data; local `data/projects/<id>/` is authoritative. Backend generates `result.pdf` and `<id>.hkai` with checksums. Don't claim cloud upload or finished PDF success based solely on local JSON save. Never destructively migrate existing projects.
@@ -49,7 +50,7 @@ More detailed flow diagrams, endpoints, coordinate spaces and file layouts are i
 
 ## 4. Current feature truth (uploaded ZIP)
 
-**Implemented in source:** three resizable panels; localStorage widths; ja/en switch; live/test image switch; no camera zoom; 90° camera rotation; prompt+SAM acceptance; sample list; line styles; Konva PDF overlay; manual sample drag/rotate; `/api/project/save`, `/load`, `/import`; local `result.pdf` and `.hkai`; FastAPI static LAN server; operator lease.
+**Implemented in source:** resizable workspace with compact inspector drawer; localStorage widths; ja/en switch; live/test image switch; no camera zoom; 90° camera rotation; prompt+SAM acceptance; sample list; line styles; Konva PDF overlay with view-only recenter; manual sample drag/rotate; local project picker; `/api/project/save`, `/load`, `/import`; local `result.pdf` and `.hkai`; FastAPI static LAN server; operator lease.
 
 **Not implemented:** Google Workspace OAuth, administrator authentication, Shared Drive file browser, durable Drive sync/retry/conflict queue, fully PDF-native coordinate migration. Do not write docs or mock UI suggesting they exist. Frontend does not currently provide a `.hkai` file-picker import action even though backend `POST /api/project/import` exists.
 

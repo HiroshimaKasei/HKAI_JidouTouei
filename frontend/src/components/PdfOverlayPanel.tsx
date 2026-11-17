@@ -129,15 +129,13 @@ export function PdfOverlayPanel({
   const selectedSample = samples.find((sample) => sample.sampleId === selectedSampleId) ?? null;
   const selectedBounds = selectedSample ? transformedContourBounds(selectedSample, overlayScale) : null;
 
-  function moveSampleToPageCenter(sample: SampleData) {
+  function centerViewportOnSample(sample: SampleData) {
     const bounds = transformedContourBounds(sample, overlayScale);
-    if (!bounds) {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!bounds || !rect) {
       return;
     }
-    onUpdateSample(sample.sampleId, {
-      tx: sample.transform.tx + pageSize.width * 0.5 - bounds.centerX,
-      ty: sample.transform.ty + pageSize.height * 0.5 - bounds.centerY,
-    });
+    setViewportPan({ x: rect.width / 2 - bounds.centerX * pdfZoom, y: rect.height / 2 - bounds.centerY * pdfZoom });
   }
 
   useEffect(() => {
@@ -149,9 +147,14 @@ export function PdfOverlayPanel({
       setPendingRecenterSampleId(null);
       return;
     }
-    moveSampleToPageCenter(pendingSample);
+    centerViewportOnSample(pendingSample);
     setPendingRecenterSampleId(null);
-  }, [pendingRecenterSampleId, renderedPage, selectedPage, pageSize, samples, overlayScale]);
+  }, [pendingRecenterSampleId, renderedPage, selectedPage, samples, overlayScale, pdfZoom]);
+
+  useEffect(() => {
+    setNumPages(0);
+    setPendingRecenterSampleId(null);
+  }, [pdfSource]);
 
   function onDocLoadSuccess(info: { numPages: number }) {
     setNumPages(info.numPages);
@@ -225,7 +228,15 @@ export function PdfOverlayPanel({
       setSelectedPage(samplePage);
       return;
     }
-    moveSampleToPageCenter(selectedSample);
+    centerViewportOnSample(selectedSample);
+  }
+
+  function fitView(mode: "page" | "width") {
+    const rect = viewportRef.current?.getBoundingClientRect();
+    if (!rect || !rect.width || !rect.height) return;
+    const zoom = Math.min(8, Math.max(0.2, mode === "width" ? rect.width / pageSize.width : Math.min(rect.width / pageSize.width, rect.height / pageSize.height)));
+    setPdfZoom(zoom);
+    setViewportPan({ x: (rect.width - pageSize.width * zoom) / 2, y: mode === "page" ? (rect.height - pageSize.height * zoom) / 2 : 0 });
   }
 
   function onSampleMouseDown(sample: SampleData, evt: MouseEvent) {
@@ -305,10 +316,13 @@ export function PdfOverlayPanel({
     <div className="panel pdf-panel">
       <div className="panel-title">{translate(language, "pdfOverlay")}</div>
       <div className="page-toolbar">
-        <button onClick={() => setSelectedPage(Math.max(1, selectedPage - 1))} disabled={selectedPage <= 1}>{translate(language, "previous")}</button>
+        <button onClick={() => setSelectedPage(Math.max(1, selectedPage - 1))} disabled={!pdfSource || selectedPage <= 1}>{translate(language, "previous")}</button>
         <span>{translate(language, "page")} {selectedPage}{numPages ? ` / ${numPages}` : ""}</span>
-        <button onClick={() => setSelectedPage(Math.min(numPages || selectedPage + 1, selectedPage + 1))} disabled={numPages > 0 && selectedPage >= numPages}>{translate(language, "next")}</button>
+        <button onClick={() => setSelectedPage(Math.min(numPages, selectedPage + 1))} disabled={!numPages || selectedPage >= numPages}>{translate(language, "next")}</button>
         <span>{translate(language, "zoom")} {Math.round(pdfZoom * 100)}%</span>
+        <button type="button" onClick={() => fitView("page")} disabled={!pdfSource}>{translate(language, "fitPage")}</button>
+        <button type="button" onClick={() => fitView("width")} disabled={!pdfSource}>{translate(language, "fitWidth")}</button>
+        <button type="button" onClick={() => { setPdfZoom(1); setViewportPan({ x: 0, y: 0 }); }} disabled={!pdfSource}>{translate(language, "resetView")}</button>
         <button type="button" onClick={recenterSelectedContour} disabled={!selectedBounds} title={translate(language, "recenterContour")}>{translate(language, "recenterContour")}</button>
       </div>
       <div
@@ -325,7 +339,7 @@ export function PdfOverlayPanel({
           style={{ transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${pdfZoom})`, transformOrigin: "0 0" }}
           onContextMenu={(e) => e.preventDefault()}
         >
-          {pdfSource ? <Document file={pdfSource} onLoadSuccess={onDocLoadSuccess}>
+          {pdfSource ? <Document file={pdfSource} onLoadSuccess={onDocLoadSuccess} loading={translate(language, "pdfLoading")} error={translate(language, "pdfError")}>
             <Page
               pageNumber={selectedPage}
               width={1000}

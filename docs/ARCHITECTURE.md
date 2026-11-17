@@ -17,7 +17,8 @@ FastAPI app (backend/app/main.py)
                      |
                      ├── CameraPanel (live or frozen prompt canvas)
                      ├── PdfOverlayPanel (PDF.js + Konva)
-                     └── InspectionInspector (SAM controls and styles)
+                     ├── SegmentationControls (camera-side SAM controls)
+                     └── InspectionInspector (samples and styles)
 ```
 
 The FastAPI process creates singleton services in `backend/app/state.py`. Run **one backend worker** by design: camera, SAM capture state and operator lock are process-local. Multiple Uvicorn workers would break that assumption unless state is externalized.
@@ -54,7 +55,7 @@ Mutation endpoints require `X-Operator-Token`, obtained from `/api/session/claim
 - Accepted contour vertices live in capture pixels; `overlayScale` is a project-level contour scale, while `SampleTransform.tx`, `ty`, `rotationDeg` and `visible` persist per sample.
 - `SampleStyle`: `color` (HEX), `lineType` `solid|dashed|dash_dot`, `widthMm` (mm). Legacy `transform.color` remains for compatibility.
 - The backend `PdfExportService.DISPLAY_PAGE_WIDTH=1000.0` scales geometry to PDF page width using `page.rect.width / 1000`. It converts millimetres to PDF points via `72 / 25.4`. It **does not yet use an independent PDF-native persisted transform**; compare outputs visually and geometrically before relying on dimensioned manufacturing drawings.
-- Centering the *PDF viewport* should change `viewportPan`, not `SampleTransform`; the current Recenter button instead calls `onUpdateSample` and changes `tx/ty`. See `REVIEW_NOTES.md`.
+- Recenter changes `viewportPan` to bring the transformed contour center into view; it does not change `SampleTransform` or zoom. Cross-page navigation waits for the selected page to render.
 
 When introducing PDF-native coordinates later, plan a **versioned schema migration**; handle CropBox, Rotate, point origins, page-specific dimensions, and old 1000 px placements. Never reinterpret old transforms silently.
 
@@ -88,9 +89,9 @@ data/projects/<project_id>/
 
 File naming is based on the saved `files` references; don't assume every filename above is fixed for older projects. `project.json` stores `schema_version` (default 2 for new saves), selected page, overlay scale, sample page, raw contour geometry and style. `backend/app/routers/project.py:_normalize_payload` supplies compatibility defaults.
 
-The archive is created by `ProjectService.create_archive`, and imported through `ProjectService.import_archive`. It checks member count/uncompressed size, paths, required metadata and SHA-256 checksums, then installs into a new project directory. Backend endpoint `POST /api/project/import` exists. **Current UI does not expose a `.hkai` file upload action.** `Load` fetches `/api/project/list` and loads a selected local project ID.
+The archive is created by `ProjectService.create_archive`, and imported through `ProjectService.import_archive`. It checks member count/uncompressed size, paths, required metadata and SHA-256 checksums, then installs into a new project directory. Backend endpoint `POST /api/project/import` exists. **Current UI does not expose a `.hkai` file upload action.** `Load` fetches `/api/project/list` and presents a local project picker.
 
-`result.pdf` vector export is attempted during project save; errors are returned as `export_error`. The frontend API's `saveProject` currently returns `void` and discards the backend export URLs/errors. Therefore don't imply the PDF has been successfully generated merely because the UI says 'Project saved'.
+`result.pdf` vector export is attempted during project save; errors are returned as `export_error` and shown in the UI. A local save is not proof of a generated PDF, and the UI does not offer artifact download links.
 
 ## 6. API overview
 
@@ -121,7 +122,9 @@ The archive is created by `ProjectService.create_archive`, and imported through 
 - `App.tsx`: inspection and UI workflow, localization hook, selected sample and project, layout widths/localStorage. Do not let the inspector keep a divergent sample copy.
 - `CameraPanel.tsx`: renders prompt and mask overlays; never owns the canonical SAM data.
 - `PdfOverlayPanel.tsx`: renders PDF and uses `onUpdateSample` for actual sample translation/rotation; viewport pan/zoom should remain UI-only.
-- `InspectionInspector.tsx`: presentational controls for SAM and styles, driven through typed callbacks.
+- `SegmentationControls.tsx`: camera-side SAM controls, driven by `App.tsx` state.
+- `InspectionInspector.tsx`: presentational sample and style controls, driven through typed callbacks; it becomes a drawer on compact screens.
+- `ProjectPicker.tsx`: accessible local project selection using the existing list/load APIs.
 - Backend Pydantic models and TS types must be updated together on schema changes; verify legacy normalization.
 - `PdfExportService`: derived document; should never overwrite `source.pdf`.
 - `ProjectService`: local project persistence and `.hkai` packaging; this remains authoritative until cloud sync is fully implemented.

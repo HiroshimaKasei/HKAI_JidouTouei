@@ -277,7 +277,7 @@ export async function saveProject(
     samples: SampleData[];
   },
   sourcePdf?: File
-): Promise<void> {
+): Promise<{ export_error?: string }> {
   const fd = new FormData();
   fd.append("project_id", projectId);
 
@@ -354,6 +354,7 @@ export async function saveProject(
   if (!res.ok) {
     throw new Error(await res.text());
   }
+  return res.json() as Promise<{ export_error?: string }>;
 }
 
 export async function listProjects(): Promise<string[]> {

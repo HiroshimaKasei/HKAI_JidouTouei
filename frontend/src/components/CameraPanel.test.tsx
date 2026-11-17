@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { CameraPanel } from "./CameraPanel";
@@ -85,5 +85,28 @@ describe("CameraPanel coordinate mapping", () => {
     expect(Math.round(p.x)).toBe(560);
     expect(Math.round(p.y)).toBe(270);
     expect(screen.getByText("Left click: positive. Right click: negative.")).toBeInTheDocument();
+  });
+
+  it("keeps image coordinates aligned after the panel is resized", () => {
+    const onAddPoint = vi.fn();
+    const canvas = setup(onAddPoint);
+    vi.mocked(canvas.getBoundingClientRect).mockReturnValue({
+      x: 0, y: 0, top: 0, left: 0, right: 300, bottom: 600, width: 300, height: 600, toJSON: () => ({}),
+    } as DOMRect);
+    fireEvent(window, new Event("resize"));
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 150, clientY: 300 });
+    expect(onAddPoint).toHaveBeenCalledWith({ x: 500, y: 250, label: 1 });
+  });
+
+  it("clears the file input after an asynchronous image upload", async () => {
+    let finishUpload!: () => void;
+    const onOpenImage = vi.fn(() => new Promise<void>((resolve) => { finishUpload = resolve; }));
+    render(<CameraPanel frozenImageHex="" frozenSize={null} promptPoints={[]} maskHex="" cameraStatus={null}
+      segmentationReady={false} onAddPoint={vi.fn()} onOpenImage={onOpenImage} onReturnToLive={vi.fn()} language="en" />);
+    const input = screen.getByLabelText("Open Image") as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["image"], "fixture.png", { type: "image/png" })] } });
+    expect(onOpenImage).toHaveBeenCalledTimes(1);
+    finishUpload();
+    await waitFor(() => expect(input.value).toBe(""));
   });
 });

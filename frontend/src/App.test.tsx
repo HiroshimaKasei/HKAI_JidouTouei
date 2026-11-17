@@ -3,10 +3,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import { translate, translateStatus, translationKeys } from "./i18n";
-import type { PromptPoint } from "./types/models";
+import type { PromptPoint, SampleData } from "./types/models";
 
 vi.mock("./components/PdfOverlayPanel", () => ({
-  PdfOverlayPanel: () => <div data-testid="pdf-overlay" />,
+  PdfOverlayPanel: ({ selectedSampleId, onUpdateSample }: { selectedSampleId: string | null; onUpdateSample: (id: string, patch: Partial<SampleData["transform"]>) => void }) => (
+    <div data-testid="pdf-overlay">
+      {selectedSampleId ? <button onClick={() => onUpdateSample(selectedSampleId, { tx: 123, ty: 456, rotationDeg: 37 })}>Move selected sample</button> : null}
+    </div>
+  ),
   sampleColor: (index: number) => ["#ff5500", "#0099ff", "#17a05d", "#c83f7f", "#b68000", "#1e78b7"][index % 6],
 }));
 
@@ -15,16 +19,19 @@ vi.mock("./components/CameraPanel", () => ({
     onAddPoint,
     onOpenImage,
     onReturnToLive,
+    children,
   }: {
     onAddPoint: (p: PromptPoint) => void;
     onOpenImage: (file: File) => Promise<void>;
     onReturnToLive: () => Promise<void>;
+    children: React.ReactNode;
   }) => (
     <div>
       <button onClick={() => onAddPoint({ x: 10, y: 10, label: 1 })}>Add Positive</button>
       <button onClick={() => onAddPoint({ x: 3, y: 3, label: 0 })}>Add Negative</button>
       <button onClick={() => void onOpenImage(new File(["image"], "fixture.png", { type: "image/png" }))}>Open Image</button>
       <button onClick={() => void onReturnToLive()}>Return to Live Preview</button>
+      {children}
     </div>
   ),
 }));
@@ -101,6 +108,8 @@ async function createSample(): Promise<void> {
 
 describe("App reliability regression", () => {
   beforeEach(() => {
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1920 });
+    window.localStorage.clear();
     window.localStorage.setItem("hkai-language", "en");
     vi.clearAllMocks();
     apiMock.getHealth.mockResolvedValue({ gpu: { device_name: "GPU", capability: "8.9", model_loaded: true } });
@@ -112,6 +121,8 @@ describe("App reliability regression", () => {
     ];
     apiMock.capture.mockImplementation(async () => captureCalls.shift() ?? { capture_id: "cap-x", width: 8, height: 8, mode: "test", capture_png_hex: "89504e47" });
     apiMock.predictMask.mockResolvedValue({ request_id: 1, scores: [0.95], best_index: 0, masks: ["ff"] });
+    apiMock.listProjects.mockResolvedValue(["loaded-project"]);
+    apiMock.saveProject.mockResolvedValue({});
   });
 
   it("opens a new PDF as a clean inspection and new project id", async () => {
@@ -143,6 +154,7 @@ describe("App reliability regression", () => {
     fireEvent.change(openInput, { target: { files: [pdfFile("first.pdf")] } });
     await createSample();
 
+    fireEvent.click(screen.getByRole("button", { name: "Move selected sample" }));
     fireEvent.click(screen.getByRole("button", { name: "Redo Segmentation" }));
     await waitFor(() => expect(apiMock.registerCaptureFile).toHaveBeenCalled());
 
@@ -154,6 +166,13 @@ describe("App reliability regression", () => {
 
     await waitFor(() => expect(screen.getByText("Sample 002 (P1)")).toBeInTheDocument());
     expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Sample 002 (P1)" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Sample 001 (P1)" }));
+    expect(screen.getByRole("button", { name: "Sample 001 (P1)" })).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalled());
+    const saved = apiMock.saveProject.mock.calls[0][1] as { samples: SampleData[] };
+    expect(saved.samples[1].transform).toMatchObject({ tx: 123, ty: 456, rotationDeg: 37 });
   });
 
   it("preserves sample color when replacing via redo", async () => {
@@ -165,6 +184,7 @@ describe("App reliability regression", () => {
     fireEvent.change(openInput, { target: { files: [pdfFile("first.pdf")] } });
     await createSample();
 
+    fireEvent.click(screen.getByRole("button", { name: "Move selected sample" }));
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalledTimes(1));
     const firstPayload = apiMock.saveProject.mock.calls[0][1] as { samples: Array<{ transform: { color: string } }> };
@@ -180,8 +200,9 @@ describe("App reliability regression", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalledTimes(2));
 
-    const secondPayload = apiMock.saveProject.mock.calls[1][1] as { samples: Array<{ transform: { color: string } }> };
+    const secondPayload = apiMock.saveProject.mock.calls[1][1] as { samples: SampleData[] };
     expect(secondPayload.samples[0].transform.color).toBe(colorBefore);
+    expect(secondPayload.samples[0].transform).toMatchObject({ tx: 123, ty: 456, rotationDeg: 37 });
   });
 
   it("refines prediction with positive and negative points", async () => {
@@ -231,6 +252,71 @@ describe("App reliability regression", () => {
     expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Accept Mask" })).toBeDisabled();
   });
+
+  it("loads a selected project from the dialog and restores focus", async () => {
+    render(<App />);
+    const open = screen.getByRole("button", { name: "Load" });
+    open.focus();
+    fireEvent.click(open);
+    const dialog = screen.getByRole("dialog", { name: "Select a project" });
+    expect(dialog).toHaveFocus();
+    expect(await screen.findByLabelText("loaded-project")).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("loaded-project"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Load" })[1]);
+    await waitFor(() => expect(apiMock.loadProject).toHaveBeenCalledWith("loaded-project"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(open).toHaveFocus();
+    expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument();
+  });
+
+  it("shows picker errors and closes with Escape", async () => {
+    apiMock.listProjects.mockRejectedValueOnce(new Error("network unavailable"));
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("network unavailable");
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("shows an empty project list without enabling Load", async () => {
+    apiMock.listProjects.mockResolvedValueOnce([]);
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(await screen.findByText("No saved projects")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Load" })[1]).toBeDisabled();
+  });
+
+  it("preserves unsaved changes when project loading is declined", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<App />);
+    await createSample();
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    fireEvent.click(await screen.findByLabelText("loaded-project"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Load" })[1]);
+    expect(apiMock.loadProject).not.toHaveBeenCalled();
+    expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument();
+  });
+
+  it("does not apply incomplete HEX colors and preserves visibility changes", async () => {
+    render(<App />);
+    await createSample();
+    const hex = screen.getByLabelText("HEX color");
+    fireEvent.change(hex, { target: { value: "#123" } });
+    expect(hex).toHaveAttribute("aria-invalid", "true");
+    fireEvent.click(screen.getByRole("button", { name: "Hide Sample 001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalled());
+    const payload = apiMock.saveProject.mock.calls[0][1] as { samples: Array<{ style: { color: string }; transform: { visible: boolean } }> };
+    expect(payload.samples[0].style.color).toBe("#ff5500");
+    expect(payload.samples[0].transform.visible).toBe(false);
+  });
+
+  it("reports PDF export errors without claiming a successful export", async () => {
+    apiMock.saveProject.mockResolvedValueOnce({ export_error: "export failed" });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText(/Project saved, but PDF export failed: export failed/)).toBeInTheDocument();
+  });
 });
 
 describe("localization", () => {
@@ -274,17 +360,17 @@ describe("three-panel workspace layout", () => {
     render(<App />);
 
     const workspace = document.querySelector(".layout-grid") as HTMLElement;
-    expect(workspace).toHaveStyle({ "--camera-pane-width": "440px", "--pdf-pane-width": "760px" });
+    expect(workspace).toHaveStyle({ "--camera-pane-width": "380px", "--pdf-pane-width": "1090px" });
     expect(document.querySelector(".camera-pane")).toBeInTheDocument();
     expect(document.querySelector(".pdf-pane")).toBeInTheDocument();
     expect(screen.getByRole("complementary", { name: "編集パネル" })).toBeInTheDocument();
 
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize camera panel" }), { key: "ArrowLeft" });
-    expect(workspace).toHaveStyle({ "--camera-pane-width": "420px" });
-    expect(window.localStorage.getItem("hkai-camera-pane-width")).toBe("420");
+    fireEvent.keyDown(screen.getByRole("separator", { name: "カメラパネルの幅を変更" }), { key: "ArrowLeft" });
+    expect(workspace).toHaveStyle({ "--camera-pane-width": "360px" });
+    expect(window.localStorage.getItem("hkai-camera-pane-width")).toBe("360");
 
-    fireEvent.keyDown(screen.getByRole("separator", { name: "Resize camera panel" }), { key: "ArrowLeft", repeat: true });
-    expect(Number.parseInt(workspace.style.getPropertyValue("--camera-pane-width"), 10)).toBeGreaterThanOrEqual(360);
+    fireEvent.keyDown(screen.getByRole("separator", { name: "カメラパネルの幅を変更" }), { key: "ArrowLeft", repeat: true });
+    expect(Number.parseInt(workspace.style.getPropertyValue("--camera-pane-width"), 10)).toBeGreaterThanOrEqual(300);
   });
 
   it("restores default panel widths", () => {
@@ -294,6 +380,27 @@ describe("three-panel workspace layout", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "レイアウトをリセット" }));
     const workspace = document.querySelector(".layout-grid") as HTMLElement;
-    expect(workspace).toHaveStyle({ "--camera-pane-width": "440px", "--pdf-pane-width": "760px" });
+    expect(workspace).toHaveStyle({ "--camera-pane-width": "380px", "--pdf-pane-width": "1090px" });
+  });
+
+  it("clamps persisted dimensions on resize and exposes the compact inspector", () => {
+    window.localStorage.setItem("hkai-camera-pane-width", "900");
+    window.localStorage.setItem("hkai-pdf-pane-width", "2000");
+    render(<App />);
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1280 });
+    fireEvent(window, new Event("resize"));
+    const workspace = document.querySelector(".layout-grid") as HTMLElement;
+    expect(Number(window.localStorage.getItem("hkai-camera-pane-width"))).toBeLessThanOrEqual(768);
+    expect(workspace).toHaveClass("compact-layout");
+    expect(screen.queryByRole("complementary", { name: "編集パネル" })).not.toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: "編集パネルを開く" });
+    fireEvent.click(toggle);
+    expect(screen.getByRole("complementary", { name: "編集パネル" })).toBeVisible();
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    fireEvent.click(toggle);
+    expect(screen.queryByRole("complementary", { name: "編集パネル" })).not.toBeInTheDocument();
+    Object.defineProperty(window, "innerWidth", { configurable: true, value: 1920 });
+    fireEvent(window, new Event("resize"));
+    expect(Number.parseInt(workspace.style.getPropertyValue("--pdf-pane-width"), 10)).toBeGreaterThan(480);
   });
 });

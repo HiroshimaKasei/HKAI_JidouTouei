@@ -21,7 +21,7 @@ The current UI uses **Camera | PDF Overlay | Inspector** resizable panels. Langu
 
 ### Not available yet
 
-Google Drive OAuth, Shared Drive browsing/synchronization, administrator authentication, stable PDF-native coordinate migration, and a frontend `.hkai` import button. A backend `/api/project/import` endpoint exists, but the current Load button lists local projects and prompts for an ID. See [Review Notes](docs/REVIEW_NOTES.md).
+Google Drive OAuth, Shared Drive browsing/synchronization, administrator authentication, stable PDF-native coordinate migration, and a frontend `.hkai` import button. A backend `/api/project/import` endpoint exists, while Load opens a picker for local projects. See [Review Notes](docs/REVIEW_NOTES.md).
 
 ## Hardware and software
 
@@ -64,9 +64,9 @@ From the repository root:
 4. In the center PDF, drag accepted samples to translate, right-drag to rotate. New samples inherit the **previous sample's position/rotation**; don't auto-center them.
 5. In the right inspector, choose sample visibility, line colors, solid/dashed/dash-dot type and width, plus the existing overlay scale.
 6. **Save / 保存** persists to the main PC's `data/projects/<project_id>/`. Backend produces `result.pdf` and `<project_id>.hkai` when possible. These are retrievable through backend URLs, not yet a full export UI.
-7. **Load / 読み込み** reloads a local project by ID. The backend has `.hkai` import API support but the current frontend has no archive file-picker.
+7. **Load / 読み込み** opens a picker for local project IDs. The backend has `.hkai` import API support but the current frontend has no archive file-picker.
 
-**Warning:** The current **Recenter Contour** control changes persisted sample translation rather than viewport pan. It is a known discrepancy from the intended view-only behavior. Check alignment after using it until corrected.
+**Recenter Contour** pans the PDF viewport to the selected contour without changing its saved placement or zoom.
 
 ## Repository map
 
@@ -79,7 +79,9 @@ frontend/src/
   components/
     CameraPanel.tsx           live/captured view and SAM prompt mapping
     PdfOverlayPanel.tsx       PDF.js, Konva overlay, recenter/drag/rotate
-    InspectionInspector.tsx   SAM controls, samples, line styles
+    InspectionInspector.tsx   samples and line styles
+    SegmentationControls.tsx  SAM controls alongside the camera
+    ProjectPicker.tsx         local project picker
   styles.css                  corporate colors, resizing, responsive layout
 backend/
   app/main.py                 FastAPI app, LAN gate, static assets

@@ -8,7 +8,6 @@ import {
   fileToHex,
   getCameraStatus,
   getHealth,
-  listProjects,
   loadProject,
   prepareEmbedding,
   predictMask,
@@ -22,16 +21,39 @@ import {
 import { CameraPanel } from "./components/CameraPanel";
 import { InspectionInspector } from "./components/InspectionInspector";
 import { PdfOverlayPanel, sampleColor } from "./components/PdfOverlayPanel";
+import { ProjectPicker } from "./components/ProjectPicker";
+import { SegmentationControls } from "./components/SegmentationControls";
 import { translateStatus, useLocale } from "./i18n";
 import type { CameraStatus, PromptPoint, SampleData, SampleStyle } from "./types/models";
 
 const DEFAULT_SAMPLE_STYLE: SampleStyle = { color: "#ff5500", lineType: "solid", widthMm: 0.35 };
 const STYLE_COLORS = ["#ff5500", "#0099ff", "#17a05d", "#c83f7f", "#b68000", "#1e78b7"];
-const DEFAULT_CAMERA_WIDTH = 440;
-const DEFAULT_PDF_WIDTH = 760;
-const MIN_CAMERA_WIDTH = 360;
-const MIN_PDF_WIDTH = 560;
-const MIN_INSPECTOR_WIDTH = 320;
+const DEFAULT_CAMERA_WIDTH = 380;
+const MIN_CAMERA_WIDTH = 300;
+const MIN_PDF_WIDTH = 480;
+const MIN_INSPECTOR_WIDTH = 370;
+const COMPACT_WIDTH = 1400;
+
+function defaultPdfWidth() {
+  return Math.max(MIN_PDF_WIDTH, window.innerWidth - DEFAULT_CAMERA_WIDTH - 410 - 40);
+}
+
+function storedWidth(key: string, fallback: number) {
+  const value = Number(window.localStorage.getItem(key));
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function clampPanelWidths(camera: number, pdf: number) {
+  const compact = window.innerWidth <= COMPACT_WIDTH;
+  const available = Math.max(0, window.innerWidth - (compact ? 32 : 40));
+  const inspector = compact ? 0 : MIN_INSPECTOR_WIDTH;
+  const minCamera = Math.min(MIN_CAMERA_WIDTH, available * 0.4);
+  const minPdf = Math.min(MIN_PDF_WIDTH, Math.max(0, available - minCamera - inspector));
+  const maxCamera = Math.max(minCamera, available - minPdf - inspector);
+  const nextCamera = Math.min(Math.max(camera, minCamera), maxCamera);
+  const maxPdf = Math.max(minPdf, available - nextCamera - inspector);
+  return { camera: nextCamera, pdf: Math.min(Math.max(pdf, minPdf), maxPdf) };
+}
 
 function hexToDataUrl(hex: string, mime = "image/png"): string {
   const bytes = hex.match(/.{1,2}/g)?.map((b) => String.fromCharCode(parseInt(b, 16))).join("") ?? "";
@@ -92,11 +114,15 @@ export function App() {
   const activePredictTokenRef = useRef(0);
 
   const [isDirty, setIsDirty] = useState(false);
-  const [panelWidths, setPanelWidths] = useState(() => ({
-    camera: Number(window.localStorage.getItem("hkai-camera-pane-width")) || DEFAULT_CAMERA_WIDTH,
-    pdf: Number(window.localStorage.getItem("hkai-pdf-pane-width")) || DEFAULT_PDF_WIDTH,
-  }));
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const inspectorToggleRef = useRef<HTMLButtonElement>(null);
+  const [panelWidths, setPanelWidths] = useState(() => clampPanelWidths(
+    storedWidth("hkai-camera-pane-width", DEFAULT_CAMERA_WIDTH),
+    storedWidth("hkai-pdf-pane-width", defaultPdfWidth())
+  ));
   const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const previousViewportWidthRef = useRef(window.innerWidth);
 
   const projectIdRef = useRef(makeProjectId());
 
@@ -104,14 +130,6 @@ export function App() {
     window.localStorage.setItem("hkai-camera-pane-width", String(panelWidths.camera));
     window.localStorage.setItem("hkai-pdf-pane-width", String(panelWidths.pdf));
   }, [panelWidths]);
-
-  function clampPanelWidths(camera: number, pdf: number) {
-    const available = Math.max(0, window.innerWidth - 40);
-    const maxCamera = Math.max(MIN_CAMERA_WIDTH, available - MIN_PDF_WIDTH - MIN_INSPECTOR_WIDTH);
-    const nextCamera = Math.min(Math.max(camera, MIN_CAMERA_WIDTH), maxCamera);
-    const maxPdf = Math.max(MIN_PDF_WIDTH, available - nextCamera - MIN_INSPECTOR_WIDTH);
-    return { camera: nextCamera, pdf: Math.min(Math.max(pdf, MIN_PDF_WIDTH), maxPdf) };
-  }
 
   function startResizeDivider(divider: "camera" | "pdf", event: React.PointerEvent<HTMLDivElement>) {
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -124,9 +142,11 @@ export function App() {
     const onUp = () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
   }
 
   function onDividerKeyDown(divider: "camera" | "pdf", event: React.KeyboardEvent<HTMLDivElement>) {
@@ -137,11 +157,17 @@ export function App() {
   }
 
   function resetLayout() {
-    setPanelWidths({ camera: DEFAULT_CAMERA_WIDTH, pdf: DEFAULT_PDF_WIDTH });
+    setPanelWidths(clampPanelWidths(DEFAULT_CAMERA_WIDTH, defaultPdfWidth()));
+    setInspectorOpen(false);
   }
 
   useEffect(() => {
-    const onResize = () => setViewportWidth(window.innerWidth);
+    const onResize = () => {
+      const delta = window.innerWidth - previousViewportWidthRef.current;
+      previousViewportWidthRef.current = window.innerWidth;
+      setViewportWidth(window.innerWidth);
+      setPanelWidths((current) => clampPanelWidths(current.camera, current.pdf + delta));
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -190,9 +216,9 @@ export function App() {
             setGpuStatus(`SAM: ${device} Idle`);
           }
         }
-        setStatusText("Ready");
+        setStatusText((current) => current === "Initializing" ? "Ready" : current);
       } catch (err) {
-        setStatusText(`Startup error: ${(err as Error).message}`);
+        setStatusText((current) => current === "Initializing" ? `Startup error: ${(err as Error).message}` : current);
       }
     })();
 
@@ -231,13 +257,16 @@ export function App() {
     setReplaceSampleId(null);
   }
 
-  function confirmDiscardActiveSegmentation(action: string): boolean {
+  function confirmDiscardActiveSegmentation(action: "openImage" | "returnLive"): boolean {
     const hasActiveSegmentation = Boolean(captureId || frozenImageHex || prompts.length || isPredicting || segReady);
-    return !hasActiveSegmentation || window.confirm(`Discard the active capture and segmentation to ${action}?`);
+    const message = language === "ja"
+      ? `撮影画像とセグメンテーションを破棄して「${t(action)}」を実行しますか？`
+      : `Discard the active capture and segmentation to ${t(action)}?`;
+    return !hasActiveSegmentation || window.confirm(message);
   }
 
   async function onOpenImage(file: File) {
-    if (!confirmDiscardActiveSegmentation("open an image")) {
+    if (!confirmDiscardActiveSegmentation("openImage")) {
       return;
     }
     const status = await uploadTestImage(file);
@@ -247,7 +276,7 @@ export function App() {
   }
 
   async function onReturnToLive() {
-    if (!confirmDiscardActiveSegmentation("return to the live camera")) {
+    if (!confirmDiscardActiveSegmentation("returnLive")) {
       return;
     }
     const status = await clearTestImage();
@@ -256,11 +285,11 @@ export function App() {
     setStatusText(status.camera_connected ? "Live camera preview restored" : "Live camera reconnecting...");
   }
 
-  function confirmDiscardIfDirty(action: string): boolean {
+  function confirmDiscardIfDirty(action: "newInspection" | "loadAnother"): boolean {
     if (!isDirty) {
       return true;
     }
-    return window.confirm(`Discard unsaved work and ${action}?`);
+    return window.confirm(language === "ja" ? `未保存の変更を破棄して${t(action)}しますか？` : `Discard unsaved work and ${t(action)}?`);
   }
 
   useEffect(() => {
@@ -323,7 +352,7 @@ export function App() {
     if (!file) {
       return;
     }
-    if (!confirmDiscardIfDirty("start a new inspection")) {
+    if (!confirmDiscardIfDirty("newInspection")) {
       ev.currentTarget.value = "";
       return;
     }
@@ -446,7 +475,7 @@ export function App() {
       };
 
       if (replacementTarget) {
-        const ok = window.confirm(`Replace sample ${replacementTarget.sampleId} mask with current segmentation?`);
+        const ok = window.confirm(language === "ja" ? `サンプル ${replacementTarget.sampleId} のマスクを現在の結果で置き換えますか？` : `Replace sample ${replacementTarget.sampleId} mask with current segmentation?`);
         if (!ok) {
           setStatusText("Replace cancelled");
           return;
@@ -544,7 +573,7 @@ export function App() {
 
   async function onSaveProject() {
     try {
-      await saveProject(
+      const result = await saveProject(
         projectIdRef.current,
         {
           project_id: projectIdRef.current,
@@ -565,26 +594,16 @@ export function App() {
           contourBwFile: s.contourBwFile ?? `${s.sampleId}_contour_bw.png`,
         }))
       );
-      setStatusText(`Project saved: ${projectIdRef.current}`);
+      setStatusText(result?.export_error ? `Project saved, but PDF export failed: ${result.export_error}` : `Project saved: ${projectIdRef.current}`);
       setIsDirty(false);
     } catch (err) {
       setStatusText(`Save failed: ${(err as Error).message}`);
     }
   }
 
-  async function onLoadProject() {
-    try {
-      if (!confirmDiscardIfDirty("load another project")) {
-        return;
-      }
-      const projects = await listProjects();
-      if (projects.length === 0) {
-        setStatusText("No saved projects");
-        return;
-      }
-      const pick = window.prompt("Enter project id", projects[projects.length - 1]);
-      if (!pick) {
-        return;
+  async function onLoadProject(pick: string): Promise<boolean> {
+      if (!confirmDiscardIfDirty("loadAnother")) {
+        return false;
       }
       const proj = await loadProject(pick);
       resetActiveSegmentation();
@@ -628,9 +647,7 @@ export function App() {
       setSelectedSampleId(loadedSamples[0]?.sampleId ?? null);
       setIsDirty(false);
       setStatusText(`Loaded project ${pick}`);
-    } catch (err) {
-      setStatusText(`Load failed: ${(err as Error).message}`);
-    }
+      return true;
   }
 
   const hasSegCandidates = candidateMasks.length > 0;
@@ -641,6 +658,7 @@ export function App() {
     return hexToDataUrl(maskPreviewHex);
   }, [maskPreviewHex]);
   const renderedPanelWidths = useMemo(() => clampPanelWidths(panelWidths.camera, panelWidths.pdf), [panelWidths, viewportWidth]);
+  const compactLayout = viewportWidth <= COMPACT_WIDTH;
 
   return (
     <div className="app-root">
@@ -652,17 +670,21 @@ export function App() {
         </label>
         <button className="action-btn primary-action" onClick={onCapture}>{t("capture")}</button>
         <button className="action-btn" onClick={onSaveProject}>{t("save")}</button>
-        <button className="action-btn" onClick={onLoadProject}>{t("load")}</button>
+        <button className="action-btn" onClick={() => setProjectPickerOpen(true)}>{t("load")}</button>
         <button className="action-btn layout-reset" onClick={resetLayout}>{t("resetLayout")}</button>
-        <div className="status-chip">{gpuStatus}</div>
-        <div className="status-chip" aria-live="polite">{translateStatus(language, statusText)}</div>
+        {compactLayout ? <button ref={inspectorToggleRef} className="inspector-toggle" aria-expanded={inspectorOpen} aria-controls="inspector-drawer" onClick={() => setInspectorOpen((open) => !open)}>{t(inspectorOpen ? "hideInspector" : "showInspector")}</button> : null}
+        <div className="status-summary" tabIndex={0} title={`${translateStatus(language, gpuStatus)}\n${translateStatus(language, statusText)}\n${t(isDirty ? "unsaved" : "saved")}`}>
+          <span>{translateStatus(language, gpuStatus)}</span>
+          <span aria-live="polite">{translateStatus(language, statusText)}</span>
+          <span>{t(isDirty ? "unsaved" : "saved")}</span>
+        </div>
         <div className="language-switch" role="group" aria-label={t("language")}>
           <button className={language === "ja" ? "active" : ""} onClick={() => setLanguage("ja")}>日本語</button>
           <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>English</button>
         </div>
       </header>
 
-      <main className="layout-grid" style={{ "--camera-pane-width": `${renderedPanelWidths.camera}px`, "--pdf-pane-width": `${renderedPanelWidths.pdf}px` } as React.CSSProperties}>
+      <main className={compactLayout ? "layout-grid compact-layout" : "layout-grid"} style={{ "--camera-pane-width": `${renderedPanelWidths.camera}px`, "--pdf-pane-width": `${renderedPanelWidths.pdf}px` } as React.CSSProperties}>
         <section className="camera-pane">
           <CameraPanel
             frozenImageHex={frozenImageHex}
@@ -675,10 +697,17 @@ export function App() {
             onOpenImage={onOpenImage}
             onReturnToLive={onReturnToLive}
             language={language}
-          />
+          >
+            <SegmentationControls
+              language={language} prompts={prompts.length} isPredicting={isPredicting} hasSegCandidates={hasSegCandidates} hasLatestPrediction={hasLatestPrediction}
+              candidateScores={candidateScores} selectedCandidateIndex={selectedCandidateIndex} selectedMaskDataUrl={selectedMaskDataUrl}
+              onUndoPrompt={onUndoPrompt} onResetPrompts={onResetPrompts} onRedoSegmentation={onRedoSegmentation} onAcceptMask={onAcceptMask} onCancelSegmentation={onCancelSegmentation}
+              onSelectCandidate={(index) => { setSelectedCandidateIndex(index); setMaskPreviewHex(candidateMasks[index] ?? ""); }}
+            />
+          </CameraPanel>
         </section>
 
-        <div className="resize-divider" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Resize camera panel" onPointerDown={(event) => startResizeDivider("camera", event)} onKeyDown={(event) => onDividerKeyDown("camera", event)} />
+        <div className="resize-divider" role="separator" tabIndex={0} aria-orientation="vertical" aria-label={t("resizeCamera")} aria-valuenow={renderedPanelWidths.camera} onPointerDown={(event) => startResizeDivider("camera", event)} onKeyDown={(event) => onDividerKeyDown("camera", event)} />
 
         <section className="pdf-pane">
           <PdfOverlayPanel
@@ -693,17 +722,18 @@ export function App() {
             language={language}
           />
         </section>
-        <div className="resize-divider" role="separator" tabIndex={0} aria-orientation="vertical" aria-label="Resize PDF workspace" onPointerDown={(event) => startResizeDivider("pdf", event)} onKeyDown={(event) => onDividerKeyDown("pdf", event)} />
+        {!compactLayout ? <div className="resize-divider" role="separator" tabIndex={0} aria-orientation="vertical" aria-label={t("resizePdf")} aria-valuenow={renderedPanelWidths.pdf} onPointerDown={(event) => startResizeDivider("pdf", event)} onKeyDown={(event) => onDividerKeyDown("pdf", event)} /> : null}
+        <div id="inspector-drawer" className={compactLayout ? "inspector-wrap drawer" : "inspector-wrap"} hidden={compactLayout && !inspectorOpen} onKeyDown={(event) => { if (compactLayout && event.key === "Escape") { setInspectorOpen(false); inspectorToggleRef.current?.focus(); } }}>
         <InspectionInspector
-          language={language} prompts={prompts.length} isPredicting={isPredicting} hasSegCandidates={hasSegCandidates} hasLatestPrediction={hasLatestPrediction}
-          candidateScores={candidateScores} selectedCandidateIndex={selectedCandidateIndex} selectedMaskDataUrl={selectedMaskDataUrl}
+          language={language} isPredicting={isPredicting}
           samples={samples} selectedSampleId={selectedSampleId} overlayScale={overlayScale} styleColors={STYLE_COLORS} defaultStyle={DEFAULT_SAMPLE_STYLE}
-          onUndoPrompt={onUndoPrompt} onResetPrompts={onResetPrompts} onRedoSegmentation={onRedoSegmentation} onAcceptMask={onAcceptMask} onCancelSegmentation={onCancelSegmentation}
-          onSelectCandidate={(index) => { setSelectedCandidateIndex(index); setMaskPreviewHex(candidateMasks[index] ?? ""); }} onSelectSample={setSelectedSampleId}
+          onSelectSample={setSelectedSampleId}
           onUpdateSample={updateSample} onUpdateSampleStyle={updateSampleStyle} onApplyStyleToAll={applyStyleToAll} onDeleteSample={deleteSample}
-          onRedoSelectedSample={redoSelectedSample} onSetOverlayScale={setOverlayScale}
+          onRedoSelectedSample={redoSelectedSample} onSetOverlayScale={(scale) => { setOverlayScale(scale); setIsDirty(true); }}
         />
+        </div>
       </main>
+      {projectPickerOpen ? <ProjectPicker language={language} onClose={() => setProjectPickerOpen(false)} onLoad={onLoadProject} /> : null}
     </div>
   );
 }

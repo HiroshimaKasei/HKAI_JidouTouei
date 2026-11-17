@@ -18,6 +18,15 @@ const messages = {
     ready: "準備完了", initializing: "初期化中", runningSam: "SAM推論を実行中...", segmentationUpdated: "セグメンテーションを更新しました", captureFrozen: "撮影を固定しました。SAMプロンプトを追加してください。",
     settings: "設定", sample: "サンプル", language: "言語", samReady: "準備完了", loading: "読み込み中", processing: "処理中", error: "エラー",
     inspector: "編集パネル", overlaySettings: "オーバーレイ設定", selectSample: "サンプルを選択してください", resetLayout: "レイアウトをリセット",
+    showInspector: "編集パネルを開く", hideInspector: "編集パネルを閉じる", resizeCamera: "カメラパネルの幅を変更", resizePdf: "PDFパネルの幅を変更",
+    promptCount: "プロンプト数", candidateScore: "候補（モデルスコア）", selectedMask: "選択中のマスク", frozenCapture: "撮影画像", liveSource: "ライブカメラ", loadedSource: "読み込み画像",
+    chooseProject: "プロジェクトを選択", noProjects: "保存済みプロジェクトはありません", loadFailed: "読み込みに失敗しました",
+    unsaved: "未保存の変更あり", saved: "変更なし", fitPage: "ページ全体", fitWidth: "幅に合わせる", resetView: "表示をリセット",
+    pdfLoading: "PDFを読み込み中", pdfError: "PDFを表示できません", transform: "配置", positionPixels: "位置（表示ピクセル）", rotationDegrees: "回転（度）",
+    scaleMeaning: "輪郭の表示倍率（物理校正ではありません）", hexColor: "HEX色", setColor: "色を設定", lineWidthMm: "線の太さ（mm）",
+    noSamples: "サンプルはまだありません", cameraImage: "カメラ画像", resizeValue: "幅（ピクセル）",
+    saveExportWarning: "プロジェクトは保存されましたが、PDF出力に失敗しました",
+    newInspection: "新規検査を開始", loadAnother: "別のプロジェクトを読み込み",
   },
   en: {
     openPdf: "Open PDF", capture: "Capture", save: "Save", load: "Load", camera: "Camera", segmentation: "Segmentation", samples: "Sample List",
@@ -32,6 +41,15 @@ const messages = {
     ready: "Ready", initializing: "Initializing", runningSam: "Running SAM inference...", segmentationUpdated: "Segmentation updated", captureFrozen: "Capture frozen. Add SAM prompts.",
     settings: "Settings", sample: "Sample", language: "Language", samReady: "Ready", loading: "Loading", processing: "Processing", error: "Error",
     inspector: "Inspector", overlaySettings: "Overlay Settings", selectSample: "Select a sample to edit its properties", resetLayout: "Reset Layout",
+    showInspector: "Open Inspector", hideInspector: "Close Inspector", resizeCamera: "Resize camera panel", resizePdf: "Resize PDF workspace",
+    promptCount: "Prompts", candidateScore: "Candidate (model score)", selectedMask: "Selected mask", frozenCapture: "Frozen capture", liveSource: "Live camera", loadedSource: "Loaded image",
+    chooseProject: "Select a project", noProjects: "No saved projects", loadFailed: "Load failed",
+    unsaved: "Unsaved changes", saved: "No unsaved changes", fitPage: "Fit Page", fitWidth: "Fit Width", resetView: "Reset View",
+    pdfLoading: "Loading PDF", pdfError: "Unable to display PDF", transform: "Transform", positionPixels: "Position (display pixels)", rotationDegrees: "Rotation (degrees)",
+    scaleMeaning: "Contour display scale (not physical calibration)", hexColor: "HEX color", setColor: "Set color", lineWidthMm: "Line width (mm)",
+    noSamples: "No samples yet", cameraImage: "Camera image", resizeValue: "Width (pixels)",
+    saveExportWarning: "Project saved, but PDF export failed",
+    newInspection: "start a new inspection", loadAnother: "load another project",
   },
 } as const;
 
@@ -49,6 +67,31 @@ export function translateStatus(language: Language, value: string): string {
   };
   if (exact[value]) {
     return translate(language, exact[value]);
+  }
+  if (language === "ja") {
+    const prefixes: Array<[string, string]> = [
+      ["Startup error:", "起動エラー:"], ["Image source selected:", "画像を選択:"],
+      ["Live camera preview restored", "ライブ表示に戻りました"], ["Live camera reconnecting...", "カメラ再接続中..."],
+      ["Segmentation updated", "セグメンテーションを更新しました"], ["SAM error:", "SAMエラー:"],
+      ["Loaded PDF:", "PDFを読み込みました:"], [" (new inspection)", "（新規検査）"],
+      ["Capturing frame...", "撮影中..."], ["Capture frozen. Add SAM prompts. Embedding:", "撮影画像を固定しました。プロンプトを追加してください。埋め込み:"],
+      ["Capture error:", "撮影エラー:"], ["Segmentation restarted on frozen image", "撮影画像のセグメンテーションを再開しました"],
+      ["Wait for inference to finish", "推論の完了をお待ちください"], ["Wait for a successful latest prediction", "最新の推論結果をお待ちください"],
+      ["No mask candidate selected", "マスク候補が選択されていません"], ["Replace cancelled", "置き換えをキャンセルしました"],
+      ["Accepted mask as Sample ", "マスクをサンプルとして確定: "], ["Accept error:", "マスク確定エラー:"],
+      ["Redo segmentation prepared for Sample ", "サンプルの再セグメンテーションを準備: "], ["Redo setup failed:", "再セグメンテーションの準備に失敗:"],
+      ["Redo replacement cancelled; original sample kept", "置き換えをキャンセルしました。元のサンプルは保持されています"],
+      ["Capture/segmentation cancelled", "撮影・セグメンテーションをキャンセルしました"],
+      ["Project saved, but PDF export failed:", "プロジェクトは保存されましたが、PDF出力に失敗しました:"],
+      ["Project saved:", "プロジェクトを保存しました:"], ["Save failed:", "保存に失敗:"], ["Loaded project ", "プロジェクトを読み込みました: "],
+    ];
+    for (const [prefix, replacement] of prefixes) {
+      if (value.startsWith(prefix)) return replacement + value.slice(prefix.length).replace(" (new inspection)", "（新規検査）");
+    }
+    if (value.startsWith("SAM: ")) {
+      return value.replace("Checking", "確認中").replace("Loading", "読み込み中").replace("Processing", "処理中")
+        .replace("Ready", "準備完了").replace("Idle", "待機中").replace("Error", "エラー");
+    }
   }
   return value;
 }

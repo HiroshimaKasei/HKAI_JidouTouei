@@ -15,6 +15,7 @@ type Props = {
   onOpenImage: (file: File) => Promise<void>;
   onReturnToLive: () => Promise<void>;
   language: Language;
+  children?: React.ReactNode;
 };
 
 function hexPngToDataUrl(hex: string): string {
@@ -32,6 +33,7 @@ export function CameraPanel({
   onOpenImage,
   onReturnToLive,
   language,
+  children,
 }: Props) {
   const [liveSrc, setLiveSrc] = useState<string>(frameUrl());
   const [loadErr, setLoadErr] = useState<string>("");
@@ -133,7 +135,8 @@ export function CameraPanel({
   }
 
   async function onUploadTestMode(ev: React.ChangeEvent<HTMLInputElement>) {
-    const file = ev.target.files?.[0];
+    const input = ev.currentTarget;
+    const file = input.files?.[0];
     if (!file) {
       return;
     }
@@ -143,7 +146,7 @@ export function CameraPanel({
     } catch (err) {
       setLoadErr((err as Error).message);
     } finally {
-      ev.currentTarget.value = "";
+      input.value = "";
     }
   }
 
@@ -171,7 +174,8 @@ export function CameraPanel({
         key={`${p.x}-${p.y}-${i}`}
         className={p.label === 1 ? "prompt-point positive" : "prompt-point negative"}
         style={{ left: `${sx}px`, top: `${sy}px` }}
-      />
+        aria-hidden="true"
+      >{p.label === 1 ? "+" : "−"}</div>
     );
   });
 
@@ -180,7 +184,7 @@ export function CameraPanel({
       <div className="panel-title">{translate(language, "camera")}</div>
       <div className="camera-meta">
         <span>{cameraStatus?.camera_name ?? translate(language, "cameraUnavailable")}</span>
-        {cameraStatus?.mode === "test" ? <span className="warn">{translate(language, "openImageMode")}</span> : null}
+        <strong>{translate(language, frozenImageHex ? "frozenCapture" : !cameraStatus ? "cameraUnavailable" : cameraStatus.mode === "test" ? "loadedSource" : "liveSource")}</strong>
         {cameraStatus?.mode === "camera" && !cameraStatus.camera_connected ? <span className="warn">{translate(language, "reconnecting")}</span> : null}
       </div>
       <div
@@ -193,14 +197,14 @@ export function CameraPanel({
         <img
           src={imageUrl}
           className="camera-image"
-          alt="camera"
+          alt={translate(language, "cameraImage")}
           onLoad={(event) => {
             if (!frozenSize) {
               setSourceSize({ width: event.currentTarget.naturalWidth || 2, height: event.currentTarget.naturalHeight || 3 });
             }
           }}
         />
-        {maskHex ? <img src={maskUrl} className="mask-overlay" alt="sam mask" /> : null}
+        {maskHex ? <img src={maskUrl} className="mask-overlay" alt={translate(language, "selectedMask")} /> : null}
         {promptMarkers}
       </div>
       <div className="source-switch" role="group" aria-label={translate(language, "cameraSource")}>
@@ -219,6 +223,7 @@ export function CameraPanel({
       </div>
       {loadErr ? <div className="error-text">{loadErr}</div> : null}
       <div className="hint">{translate(language, "positiveHint")}</div>
+      {children}
     </div>
   );
 }

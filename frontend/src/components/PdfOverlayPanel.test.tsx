@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
@@ -7,10 +7,10 @@ import type { SampleData } from "../types/models";
 
 vi.mock("react-pdf", () => ({
   Document: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  Page: ({ onRenderSuccess }: { onRenderSuccess: (page: { width: number; height: number }) => void }) => {
+  Page: ({ onRenderSuccess, pageNumber }: { onRenderSuccess: (page: { width: number; height: number }) => void; pageNumber: number }) => {
     useEffect(() => {
       onRenderSuccess({ width: 1000, height: 1300 });
-    }, []);
+    }, [pageNumber]);
     return <div />;
   },
   pdfjs: { GlobalWorkerOptions: {} },
@@ -44,7 +44,7 @@ describe("PdfOverlayPanel recentering", () => {
     expect(transformedContourBounds(sample(), 2)).toEqual({ centerX: 110, centerY: 205 });
   });
 
-  it("moves the selected contour to the PDF page center without changing its rotation or scale", async () => {
+  it("pans to the selected contour without changing persisted geometry or zoom", async () => {
     const selected = sample({ pageNumber: 1, transform: { tx: 500, ty: 600, rotationDeg: 0, visible: true, color: "#ff5500" } });
     const onUpdateSample = vi.fn();
     render(
@@ -62,10 +62,32 @@ describe("PdfOverlayPanel recentering", () => {
     );
 
     await waitFor(() => expect(document.querySelector(".pdf-layer-stack")).toBeInTheDocument());
+    const viewport = document.querySelector(".pdf-viewport") as HTMLElement;
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ width: 800, height: 600, left: 0, top: 0 } as DOMRect);
+    fireEvent.wheel(viewport, { deltaY: -100, clientX: 400, clientY: 300 });
     fireEvent.click(screen.getByRole("button", { name: "Recenter Contour" }));
 
-    await waitFor(() => expect(onUpdateSample).toHaveBeenCalledWith(selected.sampleId, { tx: 490, ty: 645 }));
+    expect(document.querySelector(".pdf-layer-stack")).toHaveStyle({ transform: "translate(-161px, -365.5px) scale(1.1)" });
+    expect(onUpdateSample).not.toHaveBeenCalled();
     expect(selected.transform).toEqual({ tx: 500, ty: 600, rotationDeg: 0, visible: true, color: "#ff5500" });
+  });
+
+  it("pans after the selected sample's page is rendered", async () => {
+    const selected = sample();
+    const onUpdateSample = vi.fn();
+    const pdf = new File(["pdf"], "fixture.pdf");
+    function Wrapper() {
+      const [page, setPage] = useState(1);
+      return <PdfOverlayPanel pdfSource={pdf} selectedPage={page} setSelectedPage={setPage}
+        samples={[selected]} selectedSampleId={selected.sampleId} setSelectedSampleId={vi.fn()} overlayScale={1}
+        onUpdateSample={onUpdateSample} language="en" />;
+    }
+    render(<Wrapper />);
+    const viewport = document.querySelector(".pdf-viewport") as HTMLElement;
+    vi.spyOn(viewport, "getBoundingClientRect").mockReturnValue({ width: 800, height: 600, left: 0, top: 0 } as DOMRect);
+    fireEvent.click(screen.getByRole("button", { name: "Recenter Contour" }));
+    await waitFor(() => expect(document.querySelector(".pdf-layer-stack")).toHaveStyle({ transform: "translate(290px, 95px) scale(1)" }));
+    expect(onUpdateSample).not.toHaveBeenCalled();
   });
 
   it("switches to the selected contour page before centering it", () => {
