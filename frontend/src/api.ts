@@ -268,6 +268,18 @@ export async function registerCaptureFile(file: File): Promise<{ capture_id: str
   return res.json();
 }
 
+type ProjectSaveResult = {
+  ok?: boolean;
+  export_error?: string;
+  result_pdf_url?: string;
+  archive_url?: string;
+  artifacts?: {
+    project: { status: string; error: string };
+    result_pdf: { status: string; error: string };
+    archive: { status: string; error: string };
+  };
+};
+
 export async function saveProject(
   projectId: string,
   payload: {
@@ -277,7 +289,7 @@ export async function saveProject(
     samples: SampleData[];
   },
   sourcePdf?: File
-): Promise<{ export_error?: string }> {
+): Promise<ProjectSaveResult> {
   const fd = new FormData();
   fd.append("project_id", projectId);
 
@@ -354,7 +366,17 @@ export async function saveProject(
   if (!res.ok) {
     throw new Error(await res.text());
   }
-  return res.json() as Promise<{ export_error?: string }>;
+  return res.json() as Promise<ProjectSaveResult>;
+}
+
+export async function importProject(file: File): Promise<{ project_id: string }> {
+  const fd = new FormData();
+  fd.append("archive", file);
+  const res = await operatorPost("/api/project/import", { method: "POST", body: fd });
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+  return res.json();
 }
 
 export async function listProjects(): Promise<string[]> {
@@ -371,6 +393,7 @@ export async function loadProject(projectId: string): Promise<{
   selected_page: number;
   overlay_scale: number;
   source_pdf_url: string;
+  reserved_sample_ids?: string[];
   samples: Array<{
     sample_id: string;
     capture_id: string;

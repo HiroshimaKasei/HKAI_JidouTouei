@@ -17,10 +17,8 @@ if errorlevel 1 exit /b 1
 "%VENV_PY%" -m pip install -r "%ROOT%requirements.txt"
 if errorlevel 1 exit /b 1
 
-if not exist "%ROOT%frontend\node_modules" (
-  call "%NPM_CMD%" --prefix "%ROOT%frontend" install
-  if errorlevel 1 exit /b 1
-)
+call "%NPM_CMD%" --prefix "%ROOT%frontend" ci
+if errorlevel 1 exit /b 1
 call "%NPM_CMD%" --prefix "%ROOT%frontend" run build
 if errorlevel 1 exit /b 1
 

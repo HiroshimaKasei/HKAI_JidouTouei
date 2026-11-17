@@ -18,7 +18,24 @@ type Props = {
   onDeleteSample: (sampleId: string) => void;
   onRedoSelectedSample: () => void;
   onSetOverlayScale: (scale: number) => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
 };
+
+function TransformInput({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => {
+    setDraft((current) => current !== "" && Number(current) === value ? current : String(value));
+  }, [value]);
+
+  return <label>{label}<input type="number" step="any" value={draft} onChange={(event) => {
+    setDraft(event.target.value);
+    const next = event.target.valueAsNumber;
+    if (Number.isFinite(next)) onChange(next);
+  }} onBlur={() => setDraft(String(value))} /></label>;
+}
 
 function HexColorInput({ value, label, onChange }: { value: string; label: string; onChange: (value: string) => void }) {
   const [draft, setDraft] = useState(value);
@@ -35,6 +52,7 @@ export function InspectionInspector({
   samples, selectedSampleId, overlayScale, styleColors, defaultStyle,
   onSelectSample,
   onUpdateSample, onUpdateSampleStyle, onApplyStyleToAll, onDeleteSample, onRedoSelectedSample, onSetOverlayScale,
+  canUndo, canRedo, onUndo, onRedo,
 }: Props) {
   const selectedSample = useMemo(
     () => samples.find((sample) => sample.sampleId === selectedSampleId) ?? null,
@@ -45,6 +63,10 @@ export function InspectionInspector({
     <aside className="panel inspector-panel" aria-label={translate(language, "inspector")}>
       <div className="panel-title">{translate(language, "inspector")}</div>
       <div className="inspector-content">
+        <div className="control-row">
+          <button onClick={onUndo} disabled={!canUndo}>{translate(language, "undoEdit")}</button>
+          <button onClick={onRedo} disabled={!canRedo}>{translate(language, "redoEdit")}</button>
+        </div>
         <details className="inspector-section" open>
           <summary>{translate(language, "samples")}</summary>
           <div className="sample-list">
@@ -62,9 +84,10 @@ export function InspectionInspector({
 
         <details className="inspector-section">
           <summary>{translate(language, "transform")}</summary>
-          {selectedSample ? <div className="transform-readout">
-            <div>{translate(language, "positionPixels")}: X {selectedSample.transform.tx.toFixed(1)} / Y {selectedSample.transform.ty.toFixed(1)}</div>
-            <div>{translate(language, "rotationDegrees")}: {selectedSample.transform.rotationDeg.toFixed(1)}°</div>
+          {selectedSample ? <div className="transform-readout control-row" key={selectedSample.sampleId}>
+            <TransformInput label={translate(language, "positionX")} value={selectedSample.transform.tx} onChange={(tx) => onUpdateSample(selectedSample.sampleId, { tx })} />
+            <TransformInput label={translate(language, "positionY")} value={selectedSample.transform.ty} onChange={(ty) => onUpdateSample(selectedSample.sampleId, { ty })} />
+            <TransformInput label={translate(language, "rotationDegrees")} value={selectedSample.transform.rotationDeg} onChange={(rotationDeg) => onUpdateSample(selectedSample.sampleId, { rotationDeg })} />
           </div> : <p className="empty-state">{translate(language, "selectSample")}</p>}
         </details>
 

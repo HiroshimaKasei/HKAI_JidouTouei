@@ -54,7 +54,8 @@ Mutation endpoints require `X-Operator-Token`, obtained from `/api/session/claim
 - Current `PdfOverlayPanel.tsx` renders `<Page width={1000}>` and builds a Konva stage over the same render dimensions. Browser viewport uses `viewportPan` and `pdfZoom` (not sample geometry).
 - Accepted contour vertices live in capture pixels; `overlayScale` is a project-level contour scale, while `SampleTransform.tx`, `ty`, `rotationDeg` and `visible` persist per sample.
 - `SampleStyle`: `color` (HEX), `lineType` `solid|dashed|dash_dot`, `widthMm` (mm). Legacy `transform.color` remains for compatibility.
-- The backend `PdfExportService.DISPLAY_PAGE_WIDTH=1000.0` scales geometry to PDF page width using `page.rect.width / 1000`. It converts millimetres to PDF points via `72 / 25.4`. It **does not yet use an independent PDF-native persisted transform**; compare outputs visually and geometrically before relying on dimensioned manufacturing drawings.
+- The backend `PdfExportService.DISPLAY_PAGE_WIDTH=1000.0` scales geometry to displayed PDF page width using `page.rect.width / 1000`, then maps the displayed coordinates through the inverse page rotation to PyMuPDF page coordinates. It converts line widths from millimetres to PDF points via `72 / 25.4`. The frontend uses the rendered page width to represent the same line width and dash lengths; the selected contour is visually emphasized. Non-default PDF UserUnit can still affect exported stroke width. This is **not** an independent PDF-native persisted transform or physical calibration.
+- Chain: oriented camera pixels → raw contour and centroid → project `overlayScale` around that centroid → sample rotation and `tx`/`ty` in 1000-wide display coordinates → page-specific display-to-PDF scale and rotation → vector PDF. Viewport zoom and pan affect only display. DXF vertices remain image-derived coordinates, not calibrated dimensions.
 - Recenter changes `viewportPan` to bring the transformed contour center into view; it does not change `SampleTransform` or zoom. Cross-page navigation waits for the selected page to render.
 
 When introducing PDF-native coordinates later, plan a **versioned schema migration**; handle CropBox, Rotate, point origins, page-specific dimensions, and old 1000 px placements. Never reinterpret old transforms silently.
@@ -89,9 +90,13 @@ data/projects/<project_id>/
 
 File naming is based on the saved `files` references; don't assume every filename above is fixed for older projects. `project.json` stores `schema_version` (default 2 for new saves), selected page, overlay scale, sample page, raw contour geometry and style. `backend/app/routers/project.py:_normalize_payload` supplies compatibility defaults.
 
-The archive is created by `ProjectService.create_archive`, and imported through `ProjectService.import_archive`. It checks member count/uncompressed size, paths, required metadata and SHA-256 checksums, then installs into a new project directory. Backend endpoint `POST /api/project/import` exists. **Current UI does not expose a `.hkai` file upload action.** `Load` fetches `/api/project/list` and presents a local project picker.
+The archive is created by `ProjectService.create_archive`, and imported through `ProjectService.import_archive`. It checks member count/uncompressed size, paths, required metadata and SHA-256 checksums, then installs into a new project directory. The UI can upload `.hkai` and browse local projects; an existing project ID is not overwritten.
 
-`result.pdf` vector export is attempted during project save; errors are returned as `export_error` and shown in the UI. A local save is not proof of a generated PDF, and the UI does not offer artifact download links.
+Save stages files and artifacts before replacing the project directory; interrupted replacements can recover a prior backup. Deleted/replaced sample assets are retained locally for session undo but excluded from the active archive. Save results include `export_error`, artifact statuses and URLs; only returned artifacts get download links. Local save does not guarantee a generated PDF.
+
+Project edits increment a client revision; an immutable snapshot is submitted once per save. A successful response clears the dirty flag only if no newer revision exists. Capture, prompts and unfinished segmentation are temporary workspace state and are not serialized; accepted samples are persisted. Undo history is session-local.
+
+Uploads are spooled with limits: archive 1 GiB, source PDF 256 MiB, each sample asset 64 MiB, and total save uploads 1 GiB. FastAPI's multipart parsing occurs before these endpoint checks, so deployment-level request and disk limits remain necessary. Retained versions and recovery backups can consume disk space; do not remove them while recovery or undo may be needed.
 
 ## 6. API overview
 
@@ -140,3 +145,7 @@ The archive is created by `ProjectService.create_archive`, and imported through 
 ## 9. Future feature boundaries
 
 Google Workspace OAuth/Shared Drive support, persistent sync queue, per-user authentication, and PDF-native coordinate migration are **planned** but not present in this snapshot. Do not fabricate endpoints or test results for them. Preserve local-first project behavior when adding those features.
+
+### Access-control design boundary
+
+A future deployment decision must define identities and roles: read-only users may view approved projects and downloads; operators additionally control the camera and modify projects; administrators manage access, trusted networks and server-side credentials. Authentication, per-project authorization, audit and session expiry must be enforced server-side. The current LAN allowlist and operator lease provide none of those identity guarantees; read endpoints remain accessible to allowed LAN clients. Do not expose port 8000 publicly or add default credentials.

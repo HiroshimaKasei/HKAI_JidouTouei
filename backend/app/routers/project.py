@@ -1,21 +1,57 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import shutil
+from uuid import uuid4
 import zipfile
 
 import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import ValidationError
+from pydantic import Field, ValidationError
 
 from app.routers._operator_guard import require_operator_lock
 from app.schemas.models import LoadProjectResponse, SaveProjectPayload
 from app.services.pdf_export_service import PdfExportService
+from app.services.project_service import MAX_ARCHIVE_BYTES
 from app.state import contour_service, project_service
 
 router = APIRouter(prefix="/api/project", tags=["project"])
 pdf_export_service = PdfExportService()
+MAX_SOURCE_BYTES = 256 * 1024 * 1024
+MAX_SAMPLE_BYTES = 64 * 1024 * 1024
+MAX_SAVE_UPLOAD_BYTES = MAX_ARCHIVE_BYTES
+UPLOAD_CHUNK_BYTES = 1024 * 1024
+
+
+class LoadProjectWithReservedSamples(LoadProjectResponse):
+    reserved_sample_ids: list[str] = Field(default_factory=list)
+
+
+async def _spool_upload(upload: UploadFile, path: Path, limit: int, remaining: list[int]) -> None:
+    size = 0
+    with path.open("wb") as target:
+        while True:
+            chunk = await upload.read(min(UPLOAD_CHUNK_BYTES, limit - size + 1, remaining[0] + 1))
+            if not chunk:
+                break
+            size += len(chunk)
+            remaining[0] -= len(chunk)
+            if size > limit or remaining[0] < 0:
+                raise HTTPException(status_code=413, detail="Upload exceeds size limit")
+            target.write(chunk)
+
+
+async def _spool_files(files: list[UploadFile] | None, spool: Path, remaining: list[int]) -> dict[str, Path]:
+    result = {}
+    for upload in files or []:
+        if upload.filename:
+            path = spool / uuid4().hex
+            await _spool_upload(upload, path, MAX_SAMPLE_BYTES, remaining)
+            result[upload.filename] = path
+    return result
 
 
 @router.get("/list")
@@ -29,17 +65,13 @@ async def import_project_archive(
 ) -> dict[str, object]:
     if not archive.filename or Path(archive.filename).suffix.lower() != ".hkai":
         raise HTTPException(status_code=400, detail="An .hkai archive is required")
-    import tempfile
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".hkai") as temp:
-        temp.write(await archive.read())
-        temp_path = Path(temp.name)
-    try:
-        project_id = project_service.import_archive(temp_path)
-    except (ValueError, zipfile.BadZipFile) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    finally:
-        temp_path.unlink(missing_ok=True)
+    with project_service.upload_spool() as spool:
+        temp_path = spool / "archive.hkai"
+        await _spool_upload(archive, temp_path, MAX_ARCHIVE_BYTES, [MAX_ARCHIVE_BYTES])
+        try:
+            project_id = project_service.import_archive(temp_path)
+        except (ValueError, zipfile.BadZipFile) as exc:
+            raise HTTPException(status_code=400, detail="Invalid project archive") from exc
     return {"project_id": project_id}
 
 
@@ -75,8 +107,6 @@ async def save_project(
     sample_mask: list[UploadFile] | None = File(None),
     sample_contour_bw: list[UploadFile] | None = File(None),
 ) -> dict[str, object]:
-    import json
-
     try:
         payload_raw = json.loads(payload_json)
     except json.JSONDecodeError as exc:
@@ -93,95 +123,138 @@ async def save_project(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    captures_by_name = {f.filename: f for f in (sample_capture or []) if f.filename}
-    masks_by_name = {f.filename: f for f in (sample_mask or []) if f.filename}
-    contours_by_name = {f.filename: f for f in (sample_contour_bw or []) if f.filename}
+    with project_service.upload_spool() as spool:
+        return await _save_validated_project(
+            project_id, pdir, payload_raw, payload, spool, source_pdf,
+            sample_capture, sample_mask, sample_contour_bw,
+        )
 
+
+async def _save_validated_project(
+    project_id: str, pdir: Path, payload_raw: dict, payload: SaveProjectPayload, spool: Path,
+    source_pdf: UploadFile | None, sample_capture: list[UploadFile] | None,
+    sample_mask: list[UploadFile] | None, sample_contour_bw: list[UploadFile] | None,
+) -> dict[str, object]:
+    remaining = [MAX_SAVE_UPLOAD_BYTES]
+    captures_by_name = await _spool_files(sample_capture, spool, remaining)
+    masks_by_name = await _spool_files(sample_mask, spool, remaining)
+    contours_by_name = await _spool_files(sample_contour_bw, spool, remaining)
+    source_path = None
     if source_pdf is not None:
-        project_service.save_pdf_bytes(project_id, await source_pdf.read())
-
+        source_path = spool / "source.pdf"
+        await _spool_upload(source_pdf, source_path, MAX_SOURCE_BYTES, remaining)
     out_payload = payload.model_dump(mode="json")
+    sample_ids = [sample["sample_id"] for sample in out_payload["samples"]]
+    if len({sample_id.rstrip(".").casefold() for sample_id in sample_ids}) != len(sample_ids):
+        raise HTTPException(status_code=400, detail="Duplicate sample_id")
+    try:
+        for sample_id in sample_ids:
+            project_service.sample_dir(pdir, sample_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    for sample in out_payload.get("samples", []):
-        try:
-            sdir = project_service.sample_dir(pdir, sample["sample_id"])
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        sdir.mkdir(parents=True, exist_ok=True)
+    with project_service.staged_project(project_id) as (staging, transaction):
+        project_service.reconcile_samples(staging, out_payload["samples"])
+        if source_path is not None:
+            shutil.copyfile(source_path, staging / "source.pdf")
 
-        files = sample.get("files", {})
+        for sample, raw_sample in zip(out_payload["samples"], payload_raw.get("samples", [])):
+            sample_id = sample["sample_id"]
+            sdir = project_service.sample_dir(staging, sample_id)
+            sdir.mkdir(parents=True, exist_ok=True)
+            files = sample["files"]
 
-        # Preferred path: uploaded binary files.
-        for key, name, file_map, default_name in [
-            ("capture", files.get("capture", ""), captures_by_name, "capture.png"),
-            ("mask", files.get("mask", ""), masks_by_name, "mask.png"),
-            ("contour_bw", files.get("contour_bw", ""), contours_by_name, "contour_bw.png"),
-        ]:
-            if name and name in file_map:
-                target_name = Path(name).name
-                (sdir / target_name).write_bytes(await file_map[name].read())
-                files[key] = target_name
-            elif not name:
-                files[key] = default_name if (sdir / default_name).exists() else ""
+            for key, file_map, default_name in [
+                ("capture", captures_by_name, "capture.png"),
+                ("mask", masks_by_name, "mask.png"),
+                ("contour_bw", contours_by_name, "contour_bw.png"),
+            ]:
+                name = files.get(key, "")
+                if name and name in file_map:
+                    files[key] = Path(name).name
+                    project_service.write_sample_asset(staging, sample_id, files[key], file_map[name])
+                elif name:
+                    files[key] = Path(name).name
+                else:
+                    files[key] = default_name if (sdir / default_name).exists() else ""
 
-        # Legacy compatibility path: inlined hex image payloads.
-        for old_key, new_key, default_name in [
-            ("capture_png_hex", "capture", "capture.png"),
-            ("mask_png_hex", "mask", "mask.png"),
-            ("contour_bw_png_hex", "contour_bw", "contour_bw.png"),
-        ]:
-            hex_data = sample.get(old_key)
-            if hex_data and not files.get(new_key):
-                try:
-                    (sdir / default_name).write_bytes(bytes.fromhex(hex_data))
+            for old_key, new_key, default_name in [
+                ("capture_png_hex", "capture", "capture.png"),
+                ("mask_png_hex", "mask", "mask.png"),
+                ("contour_bw_png_hex", "contour_bw", "contour_bw.png"),
+            ]:
+                hex_data = raw_sample.get(old_key)
+                if hex_data and not files.get(new_key):
+                    if isinstance(hex_data, str) and len(hex_data) > MAX_SAMPLE_BYTES * 2:
+                        raise HTTPException(status_code=413, detail="Upload exceeds size limit")
+                    try:
+                        content = bytes.fromhex(hex_data)
+                    except (ValueError, TypeError) as exc:
+                        raise HTTPException(status_code=400, detail=f"Invalid hex for {old_key}") from exc
+                    remaining[0] -= len(content)
+                    if remaining[0] < 0:
+                        raise HTTPException(status_code=413, detail="Upload exceeds size limit")
+                    project_service.write_sample_asset(staging, sample_id, default_name, content)
                     files[new_key] = default_name
-                except ValueError as exc:
-                    raise HTTPException(status_code=400, detail=f"Invalid hex for {old_key}") from exc
-            sample.pop(old_key, None)
 
-        mask_name = files.get("mask", "")
-        if mask_name:
-            mask_path = sdir / Path(mask_name).name
-            if mask_path.exists():
-                raw = np.frombuffer(mask_path.read_bytes(), dtype=np.uint8)
-                mask = cv2.imdecode(raw, cv2.IMREAD_GRAYSCALE)
-                if mask is not None:
-                    export = contour_service.export((mask > 0).astype(np.uint8), sdir, "contour")
-                    (sdir / "contour.dxf").write_bytes(export.dxf_path.read_bytes())
-
-    project_service.save_json(project_id, out_payload)
-    source_pdf_path = pdir / "source.pdf"
-    result_pdf_path = pdir / "result.pdf"
-    export_error = ""
-    if source_pdf_path.exists():
-        try:
-            pdf_export_service.export(source_pdf_path, result_pdf_path, out_payload)
-        except Exception:
-            # Local editable state remains authoritative even if an old or corrupt PDF cannot render.
-            result_pdf_path.unlink(missing_ok=True)
-            export_error = "Unable to generate vector PDF from the source document"
-    archive_path = project_service.create_archive(project_id)
+            mask_name = files.get("mask", "")
+            if mask_name:
+                mask_path = sdir / mask_name
+                if mask_path.exists():
+                    if mask_path.stat().st_size > MAX_SAMPLE_BYTES:
+                        raise HTTPException(status_code=413, detail="Upload exceeds size limit")
+                    raw = np.frombuffer(mask_path.read_bytes(), dtype=np.uint8)
+                    mask = cv2.imdecode(raw, cv2.IMREAD_GRAYSCALE)
+                    if mask is not None:
+                        export = contour_service.export((mask > 0).astype(np.uint8), sdir, "contour")
+                        (sdir / "contour.dxf").write_bytes(export.dxf_path.read_bytes())
+        (staging / "project.json").write_text(json.dumps(out_payload, indent=2), encoding="utf-8")
+        source_pdf_path = staging / "source.pdf"
+        result_pdf_path = staging / "result.pdf"
+        result_pdf_path.unlink(missing_ok=True)
+        export_error = ""
+        result_status = "missing"
+        if source_pdf_path.exists():
+            try:
+                pdf_export_service.export(source_pdf_path, result_pdf_path, out_payload)
+                if not result_pdf_path.is_file():
+                    raise OSError("PDF exporter did not create an output")
+                result_status = "ready"
+            except Exception:
+                result_pdf_path.unlink(missing_ok=True)
+                export_error = "Unable to generate vector PDF from the source document"
+                result_status = "failed"
+        archive_path = project_service.create_archive(project_id, project_dir=staging)
+        project_service.commit_staged_project(project_id, staging, transaction, preserve_backup=bool(export_error))
     return {
         "ok": True,
-        "result_pdf_url": f"/api/project/{project_id}/result.pdf" if not export_error else "",
+        "result_pdf_url": f"/api/project/{project_id}/result.pdf" if result_status == "ready" else "",
         "archive_url": f"/api/project/{project_id}/{archive_path.name}",
         "export_error": export_error,
+        "artifacts": {
+            "project": {"status": "saved", "error": ""},
+            "result_pdf": {"status": result_status, "error": export_error},
+            "archive": {"status": "ready", "error": ""},
+        },
     }
 
 
-@router.get("/load/{project_id}", response_model=LoadProjectResponse)
-def load_project(project_id: str) -> LoadProjectResponse:
+@router.get("/load/{project_id}", response_model=LoadProjectWithReservedSamples)
+def load_project(project_id: str) -> LoadProjectWithReservedSamples:
     try:
         payload = project_service.load_json(project_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     payload = _normalize_payload(payload)
-    return LoadProjectResponse(
+    reserved_ids = set(project_service.reserved_sample_ids(project_id))
+    reserved_ids.update(sample["sample_id"] for sample in payload.get("samples", []))
+    return LoadProjectWithReservedSamples(
         project_id=project_id,
         selected_page=payload.get("selected_page", 1),
         overlay_scale=payload.get("overlay_scale", 1.0),
         source_pdf_url=f"/api/project/{project_id}/source.pdf",
         samples=payload.get("samples", []),
+        reserved_sample_ids=sorted(reserved_ids),
     )
 
 

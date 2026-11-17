@@ -16,12 +16,13 @@ The current UI uses **Camera | PDF Overlay | Inspector** resizable panels. Langu
 - FastAPI backend with ImagingControl4 camera service, official SAM ViT-B and OpenCV contour extraction.
 - Live/test image switching, full-resolution capture, click prompting and SAM candidate selection.
 - PDF overlay sample move/rotate, per-sample styles, multi-page assignments, sample selection and previous-sample placement inheritance.
-- Local project save/load and backend `.hkai` ZIP archive import/export; source PDF, PNG captures/masks, DXF and `result.pdf` vector output.
+- Local project save/load, `.hkai` archive import and downloads for saved archives and generated PDFs; source PDF, PNG captures/masks and DXF.
+- Undo/redo for sample editing and numeric placement in display pixels. Hidden samples remain editable but are omitted from PDF output; their contour DXF is retained.
 - Single active operator lease; LAN allowlist; one-click Windows daily launch.
 
 ### Not available yet
 
-Google Drive OAuth, Shared Drive browsing/synchronization, administrator authentication, stable PDF-native coordinate migration, and a frontend `.hkai` import button. A backend `/api/project/import` endpoint exists, while Load opens a picker for local projects. See [Review Notes](docs/REVIEW_NOTES.md).
+Google Drive OAuth, Shared Drive browsing/synchronization, administrator authentication, and a PDF-native coordinate migration. See [Review Notes](docs/REVIEW_NOTES.md).
 
 ## Hardware and software
 
@@ -35,7 +36,7 @@ Google Drive OAuth, Shared Drive browsing/synchronization, administrator authent
 From the repository root:
 
 1. Install Python 3.11 and Node.js 20+.
-2. Run **`prepare_lan.bat`** (creates `.venv`, installs Python packages, downloads frontend npm packages if absent, builds production React frontend).
+2. Run **`prepare_lan.bat`** (creates `.venv`, installs Python packages, restores frontend packages using `npm ci`, and builds the production React frontend).
 3. On the main camera PC, verify ImagingControl4 Python bindings in the project's venv (they are **not** included in `backend/requirements.txt` in this snapshot):
 
    ```powershell
@@ -63,8 +64,10 @@ From the repository root:
 3. On frozen image, left click to add positive prompts; right click for negative prompts; select a SAM candidate and **Accept Mask / マスクを確定**.
 4. In the center PDF, drag accepted samples to translate, right-drag to rotate. New samples inherit the **previous sample's position/rotation**; don't auto-center them.
 5. In the right inspector, choose sample visibility, line colors, solid/dashed/dash-dot type and width, plus the existing overlay scale.
-6. **Save / 保存** persists to the main PC's `data/projects/<project_id>/`. Backend produces `result.pdf` and `<project_id>.hkai` when possible. These are retrievable through backend URLs, not yet a full export UI.
-7. **Load / 読み込み** opens a picker for local project IDs. The backend has `.hkai` import API support but the current frontend has no archive file-picker.
+6. **Save / 保存** persists to the main PC's `data/projects/<project_id>/`. Download links appear for successfully generated artifacts. A PDF export failure is reported separately from the editable project save. Changes made while saving remain unsaved.
+7. **Load / 読み込み** opens the local project picker. **Import project** accepts a `.hkai` archive; an existing project ID is not overwritten.
+
+An active capture and unfinished segmentation are temporary and are **not** saved in the project. Accept a mask as a sample, then save the project; the application warns before discarding active work. Undo history is local to the current session.
 
 **Recenter Contour** pans the PDF viewport to the selected contour without changing its saved placement or zoom.
 

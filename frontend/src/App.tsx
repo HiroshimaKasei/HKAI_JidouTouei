@@ -8,6 +8,7 @@ import {
   fileToHex,
   getCameraStatus,
   getHealth,
+  importProject,
   loadProject,
   prepareEmbedding,
   predictMask,
@@ -60,16 +61,18 @@ function hexToDataUrl(hex: string, mime = "image/png"): string {
   return `data:${mime};base64,${btoa(bytes)}`;
 }
 
-function nextSampleId(samples: SampleData[]): string {
+function nextSampleId(ids: Iterable<string>): string {
   let maxId = 0;
-  for (const sample of samples) {
-    const n = Number(sample.sampleId);
+  for (const id of ids) {
+    const n = Number(id);
     if (Number.isFinite(n)) {
       maxId = Math.max(maxId, n);
     }
   }
   return String(maxId + 1).padStart(3, "0");
 }
+
+type EditingSnapshot = { samples: SampleData[]; scale: number; selectedId: string | null };
 
 function sampleFileUrl(projectId: string, sampleId: string, fileName: string): string {
   return resolveApiPath(`/api/project/${projectId}/samples/${sampleId}/${fileName}`);
@@ -112,8 +115,27 @@ export function App() {
   const latestAcceptedRequestIdRef = useRef(0);
   const predictTokenRef = useRef(0);
   const activePredictTokenRef = useRef(0);
+  const captureEpochRef = useRef(0);
 
   const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const [artifacts, setArtifacts] = useState<{ pdf: string; archive: string } | null>(null);
+  const [saveError, setSaveError] = useState("");
+  const [isImporting, setIsImporting] = useState(false);
+  const saveInFlightRef = useRef(false);
+  const projectRevisionRef = useRef(0);
+  const saveRequestRef = useRef(0);
+  const usedSampleIdsRef = useRef(new Set<string>());
+  const samplesRef = useRef(samples);
+  const overlayScaleRef = useRef(overlayScale);
+  const selectedSampleIdRef = useRef(selectedSampleId);
+  const pastRef = useRef<EditingSnapshot[]>([]);
+  const futureRef = useRef<EditingSnapshot[]>([]);
+  const gestureRef = useRef<EditingSnapshot | null>(null);
+  const activeWorkRef = useRef(false);
+  const dirtyRef = useRef(false);
+  selectedSampleIdRef.current = selectedSampleId;
   const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const inspectorToggleRef = useRef<HTMLButtonElement>(null);
@@ -125,6 +147,96 @@ export function App() {
   const previousViewportWidthRef = useRef(window.innerWidth);
 
   const projectIdRef = useRef(makeProjectId());
+
+  function markDirty() {
+    projectRevisionRef.current += 1;
+    dirtyRef.current = true;
+    setIsDirty(true);
+    setArtifacts(null);
+  }
+
+  function markClean() {
+    dirtyRef.current = false;
+    setIsDirty(false);
+  }
+
+  function snapshot(): EditingSnapshot {
+    return { samples: samplesRef.current, scale: overlayScaleRef.current, selectedId: selectedSampleIdRef.current };
+  }
+
+  function refreshHistory() {
+    setHistoryVersion((version) => version + 1);
+  }
+
+  function clearHistory() {
+    pastRef.current = [];
+    futureRef.current = [];
+    gestureRef.current = null;
+    refreshHistory();
+  }
+
+  function editProject(nextSamples: SampleData[], nextScale = overlayScaleRef.current) {
+    if (!gestureRef.current) {
+      pastRef.current.push(snapshot());
+      futureRef.current = [];
+      refreshHistory();
+    }
+    samplesRef.current = nextSamples;
+    overlayScaleRef.current = nextScale;
+    setSamples(nextSamples);
+    setOverlayScale(nextScale);
+    markDirty();
+  }
+
+  function startSampleGesture() {
+    if (!gestureRef.current) gestureRef.current = snapshot();
+  }
+
+  function endSampleGesture() {
+    const start = gestureRef.current;
+    gestureRef.current = null;
+    if (start && start.samples !== samplesRef.current) {
+      pastRef.current.push(start);
+      futureRef.current = [];
+      refreshHistory();
+    }
+  }
+
+  function restoreHistory(direction: "undo" | "redo") {
+    endSampleGesture();
+    const from = direction === "undo" ? pastRef.current : futureRef.current;
+    const to = direction === "undo" ? futureRef.current : pastRef.current;
+    const entry = from.pop();
+    if (!entry) return;
+    to.push(snapshot());
+    samplesRef.current = entry.samples;
+    overlayScaleRef.current = entry.scale;
+    selectedSampleIdRef.current = entry.selectedId;
+    setSamples(entry.samples);
+    setOverlayScale(entry.scale);
+    setSelectedSampleId(entry.selectedId);
+    markDirty();
+    refreshHistory();
+  }
+
+  useEffect(() => {
+    activeWorkRef.current = Boolean(captureId || frozenImageHex || prompts.length || isPredicting || segReady);
+  }, [captureId, frozenImageHex, prompts, isPredicting, segReady]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return;
+      const key = event.key.toLowerCase();
+      if (key === "z" || key === "y") {
+        event.preventDefault();
+        restoreHistory(key === "y" || event.shiftKey ? "redo" : "undo");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem("hkai-camera-pane-width", String(panelWidths.camera));
@@ -222,7 +334,11 @@ export function App() {
       }
     })();
 
-    const onBeforeUnload = () => {
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (dirtyRef.current || activeWorkRef.current || saveInFlightRef.current) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
       void releaseOperatorSession();
     };
     window.addEventListener("beforeunload", onBeforeUnload);
@@ -246,6 +362,7 @@ export function App() {
   }
 
   function resetActiveSegmentation() {
+    captureEpochRef.current += 1;
     setCaptureId(null);
     setFrozenImageHex("");
     setFrozenSize(null);
@@ -257,7 +374,7 @@ export function App() {
     setReplaceSampleId(null);
   }
 
-  function confirmDiscardActiveSegmentation(action: "openImage" | "returnLive"): boolean {
+  function confirmDiscardActiveSegmentation(action: "openImage" | "returnLive" | "capture"): boolean {
     const hasActiveSegmentation = Boolean(captureId || frozenImageHex || prompts.length || isPredicting || segReady);
     const message = language === "ja"
       ? `撮影画像とセグメンテーションを破棄して「${t(action)}」を実行しますか？`
@@ -286,10 +403,10 @@ export function App() {
   }
 
   function confirmDiscardIfDirty(action: "newInspection" | "loadAnother"): boolean {
-    if (!isDirty) {
+    if (!isDirty && !activeWorkRef.current) {
       return true;
     }
-    return window.confirm(language === "ja" ? `未保存の変更を破棄して${t(action)}しますか？` : `Discard unsaved work and ${t(action)}?`);
+    return window.confirm(language === "ja" ? `未保存の変更と一時的な撮影・セグメンテーションを破棄して${t(action)}しますか？` : `Discard unsaved project changes and temporary capture/segmentation to ${t(action)}?`);
   }
 
   useEffect(() => {
@@ -357,12 +474,17 @@ export function App() {
       return;
     }
     projectIdRef.current = makeProjectId();
+    usedSampleIdsRef.current = new Set();
+    clearHistory();
     resetActiveSegmentation();
+    samplesRef.current = [];
+    overlayScaleRef.current = 1;
     setSamples([]);
     setSelectedSampleId(null);
     setOverlayScale(1);
     setStatusText(`Loaded PDF: ${file.name} (new inspection)`);
-    setIsDirty(false);
+    markDirty();
+    setSaveError("");
     setPdfFile(file);
     setPdfSource(file);
     setSelectedPage(1);
@@ -370,9 +492,13 @@ export function App() {
   }
 
   async function onCapture() {
+    if (!confirmDiscardActiveSegmentation("capture")) return;
+    const epoch = ++captureEpochRef.current;
+    invalidatePredictions();
     setStatusText("Capturing frame...");
     try {
       const cap = await capture();
+      if (epoch !== captureEpochRef.current) return;
       setCaptureId(cap.capture_id);
       setFrozenSize({ width: cap.width, height: cap.height });
       setFrozenImageHex(cap.capture_png_hex);
@@ -381,16 +507,17 @@ export function App() {
       requestCounterRef.current = 0;
       latestAcceptedRequestIdRef.current = 0;
       invalidatePredictions();
-      setIsDirty(true);
 
       setGpuStatus(samDevice === "cuda" ? "SAM: GPU Loading" : "SAM: CPU Loading");
 
       const prep = (await prepareEmbedding(cap.capture_id)) as { prepare_ms?: number } | void;
+      if (epoch !== captureEpochRef.current) return;
       setSegReady(true);
       const prepMs = prep && typeof prep === "object" ? prep.prepare_ms : undefined;
       setStatusText(prepMs ? `Capture frozen. Add SAM prompts. Embedding: ${prepMs.toFixed(0)} ms` : "Capture frozen. Add SAM prompts.");
       setGpuStatus(samDevice === "cuda" ? "SAM: GPU Ready" : "SAM: CPU Ready");
     } catch (err) {
+      if (epoch !== captureEpochRef.current) return;
       setStatusText(`Capture error: ${(err as Error).message}`);
       setGpuStatus(samDevice === "cuda" ? `SAM: GPU Error (${(err as Error).message})` : `SAM: CPU Error (${(err as Error).message})`);
     }
@@ -398,19 +525,16 @@ export function App() {
 
   function onAddPrompt(p: PromptPoint) {
     setPrompts((prev) => [...prev, p]);
-    setIsDirty(true);
   }
 
   function onUndoPrompt() {
     setPrompts((prev) => prev.slice(0, -1));
     invalidatePredictions();
-    setIsDirty(true);
   }
 
   function onResetPrompts() {
     setPrompts([]);
     invalidatePredictions();
-    setIsDirty(true);
   }
 
   function onRedoSegmentation() {
@@ -435,12 +559,16 @@ export function App() {
       return;
     }
 
+    const epoch = captureEpochRef.current;
+    const predictionToken = predictTokenRef.current;
     try {
       const resp = await acceptMask(captureId, latestAcceptedRequestIdRef.current, selectedCandidateIndex);
+      if (epoch !== captureEpochRef.current || predictionToken !== predictTokenRef.current) return;
       const replacementId = replaceSampleId;
-      const replacementTarget = replacementId ? samples.find((s) => s.sampleId === replacementId) : undefined;
-      const inherit = samples.length > 0 ? samples[samples.length - 1].transform : null;
-      const nextId = replacementTarget ? replacementTarget.sampleId : nextSampleId(samples);
+      const currentSamples = samplesRef.current;
+      const replacementTarget = replacementId ? currentSamples.find((s) => s.sampleId === replacementId) : undefined;
+      const inherit = currentSamples.length > 0 ? currentSamples[currentSamples.length - 1].transform : null;
+      const nextId = replacementTarget ? replacementTarget.sampleId : nextSampleId(usedSampleIdsRef.current);
 
       const sample: SampleData = {
         sampleId: nextId,
@@ -480,45 +608,42 @@ export function App() {
           setStatusText("Replace cancelled");
           return;
         }
-        setSamples((prev) => prev.map((s) => (s.sampleId === replacementTarget.sampleId ? sample : s)));
+        editProject(currentSamples.map((s) => (s.sampleId === replacementTarget.sampleId ? sample : s)));
         setReplaceSampleId(null);
       } else {
         if (replacementId) {
           setReplaceSampleId(null);
         }
-        setSamples((prev) => [...prev, sample]);
+        usedSampleIdsRef.current.add(sample.sampleId);
+        editProject([...currentSamples, sample]);
       }
 
       setSelectedSampleId(sample.sampleId);
-      setIsDirty(true);
       setStatusText(`Accepted mask as Sample ${sample.sampleId}`);
       onRedoSegmentation();
     } catch (err) {
+      if (epoch !== captureEpochRef.current) return;
       setStatusText(`Accept error: ${(err as Error).message}`);
     }
   }
 
   function updateSample(sampleId: string, patch: Partial<SampleData["transform"]>) {
-    setSamples((prev) => prev.map((s) => (s.sampleId === sampleId ? { ...s, transform: { ...s.transform, ...patch } } : s)));
-    setIsDirty(true);
+    editProject(samplesRef.current.map((s) => (s.sampleId === sampleId ? { ...s, transform: { ...s.transform, ...patch } } : s)));
   }
 
   function updateSampleStyle(sampleId: string, patch: Partial<SampleStyle>) {
-    setSamples((prev) => prev.map((s) => (s.sampleId === sampleId ? { ...s, style: { ...s.style, ...patch } } : s)));
-    setIsDirty(true);
+    editProject(samplesRef.current.map((s) => (s.sampleId === sampleId ? { ...s, style: { ...s.style, ...patch } } : s)));
   }
 
   function applyStyleToAll(style: SampleStyle) {
-    setSamples((prev) => prev.map((s) => ({ ...s, style: { ...style } })));
-    setIsDirty(true);
+    editProject(samplesRef.current.map((s) => ({ ...s, style: { ...style } })));
   }
 
   function deleteSample(sampleId: string) {
-    setSamples((prev) => prev.filter((s) => s.sampleId !== sampleId));
+    editProject(samplesRef.current.filter((s) => s.sampleId !== sampleId));
     if (selectedSampleId === sampleId) {
       setSelectedSampleId(null);
     }
-    setIsDirty(true);
   }
 
   async function redoSelectedSample() {
@@ -530,6 +655,9 @@ export function App() {
       return;
     }
 
+    if (!confirmDiscardActiveSegmentation("capture")) return;
+    const epoch = ++captureEpochRef.current;
+    invalidatePredictions();
     try {
       let captureFile: File;
       if (target.capturePngHex) {
@@ -546,6 +674,7 @@ export function App() {
       const reg = await registerCaptureFile(captureFile);
       await prepareEmbedding(reg.capture_id);
       const captureHex = target.capturePngHex ?? (await fileToHex(captureFile));
+      if (epoch !== captureEpochRef.current) return;
       setReplaceSampleId(target.sampleId);
       setCaptureId(reg.capture_id);
       setFrozenImageHex(captureHex);
@@ -557,6 +686,7 @@ export function App() {
       setSegReady(true);
       setStatusText(`Redo segmentation prepared for Sample ${target.sampleId}`);
     } catch (err) {
+      if (epoch !== captureEpochRef.current) return;
       setStatusText(`Redo setup failed: ${(err as Error).message}`);
     }
   }
@@ -572,36 +702,69 @@ export function App() {
   }
 
   async function onSaveProject() {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    setIsSaving(true);
+    setSaveError("");
+    const requestId = ++saveRequestRef.current;
+    const revision = projectRevisionRef.current;
+    const projectId = projectIdRef.current;
+    const savedPage = selectedPage;
+    const savedScale = overlayScaleRef.current;
+    const savedPdf = pdfFile;
     try {
+      const savedSamples = structuredClone(samplesRef.current);
       const result = await saveProject(
-        projectIdRef.current,
+        projectId,
         {
-          project_id: projectIdRef.current,
-          selected_page: selectedPage,
-          overlay_scale: overlayScale,
-          samples,
+          project_id: projectId,
+          selected_page: savedPage,
+          overlay_scale: savedScale,
+          samples: savedSamples,
         },
-        pdfFile ?? undefined
+        savedPdf ?? undefined
       );
-      setSamples((prev) =>
-        prev.map((s) => ({
-          ...s,
-          capturePngHex: undefined,
-          maskPngHex: undefined,
-          contourBwPngHex: undefined,
-          captureFile: s.captureFile ?? `${s.sampleId}_capture.png`,
-          maskFile: s.maskFile ?? `${s.sampleId}_mask.png`,
-          contourBwFile: s.contourBwFile ?? `${s.sampleId}_contour_bw.png`,
-        }))
-      );
-      setStatusText(result?.export_error ? `Project saved, but PDF export failed: ${result.export_error}` : `Project saved: ${projectIdRef.current}`);
-      setIsDirty(false);
+      if (requestId !== saveRequestRef.current || projectId !== projectIdRef.current) return;
+      if (result?.ok === false) throw new Error("Project save was not completed");
+      const current = revision === projectRevisionRef.current;
+      if (current) {
+        markClean();
+        setArtifacts({ pdf: result?.result_pdf_url ?? "", archive: result?.archive_url ?? "" });
+      }
+      if (result?.export_error) {
+        setSaveError(`${t("saveExportWarning")}: ${result.export_error}`);
+      } else if (result?.artifacts?.result_pdf.status === "missing") {
+        setSaveError(t("savedWithoutPdf"));
+      }
+      setStatusText(current ? `Project saved: ${projectId}` : t("olderRevisionSaved"));
     } catch (err) {
-      setStatusText(`Save failed: ${(err as Error).message}`);
+      setSaveError(`${t("saveFailed")}: ${(err as Error).message}`);
+      setStatusText(t("saveFailed"));
+    } finally {
+      saveInFlightRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function onImportProject(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = "";
+    if (!file || isImporting || saveInFlightRef.current) return;
+    setIsImporting(true);
+    setSaveError("");
+    try {
+      const imported = await importProject(file);
+      setStatusText(`${t("importSucceeded")}: ${imported.project_id}`);
+      setProjectPickerOpen(true);
+    } catch (err) {
+      setSaveError(`${t("importFailed")}: ${(err as Error).message}`);
+    } finally {
+      setIsImporting(false);
     }
   }
 
   async function onLoadProject(pick: string): Promise<boolean> {
+      if (saveInFlightRef.current) return false;
       if (!confirmDiscardIfDirty("loadAnother")) {
         return false;
       }
@@ -610,6 +773,7 @@ export function App() {
       projectIdRef.current = proj.project_id;
       setSelectedPage(proj.selected_page);
       setOverlayScale(proj.overlay_scale);
+      overlayScaleRef.current = proj.overlay_scale;
       setPdfFile(null);
       setPdfSource(resolvePdfUrl(proj.source_pdf_url));
 
@@ -644,8 +808,14 @@ export function App() {
         };
       });
       setSamples(loadedSamples);
+      samplesRef.current = loadedSamples;
+      usedSampleIdsRef.current = new Set([...loadedSamples.map((s) => s.sampleId), ...(proj.reserved_sample_ids ?? [])]);
+      clearHistory();
       setSelectedSampleId(loadedSamples[0]?.sampleId ?? null);
-      setIsDirty(false);
+      projectRevisionRef.current += 1;
+      markClean();
+      setArtifacts(null);
+      setSaveError("");
       setStatusText(`Loaded project ${pick}`);
       return true;
   }
@@ -659,6 +829,8 @@ export function App() {
   }, [maskPreviewHex]);
   const renderedPanelWidths = useMemo(() => clampPanelWidths(panelWidths.camera, panelWidths.pdf), [panelWidths, viewportWidth]);
   const compactLayout = viewportWidth <= COMPACT_WIDTH;
+  const operationalError = /^(Startup error:|SAM error:|Capture error:|Accept error:|Redo setup failed:)/.test(statusText)
+    ? translateStatus(language, statusText) : "";
 
   return (
     <div className="app-root">
@@ -666,23 +838,28 @@ export function App() {
         <div className="brand">AI自動投影</div>
         <label className="action-btn">
           {t("openPdf")}
-          <input type="file" accept="application/pdf" onChange={onOpenPdf} />
+          <input type="file" accept="application/pdf" onChange={onOpenPdf} disabled={isSaving} />
         </label>
         <button className="action-btn primary-action" onClick={onCapture}>{t("capture")}</button>
-        <button className="action-btn" onClick={onSaveProject}>{t("save")}</button>
-        <button className="action-btn" onClick={() => setProjectPickerOpen(true)}>{t("load")}</button>
+        <button className="action-btn" onClick={onSaveProject} disabled={isSaving}>{t(isSaving ? "saving" : "save")}</button>
+        <button className="action-btn" onClick={() => setProjectPickerOpen(true)} disabled={isSaving}>{t("load")}</button>
+        <label className="action-btn">{t("importArchive")}<input type="file" accept=".hkai" onChange={onImportProject} disabled={isSaving || isImporting} /></label>
+        {artifacts?.pdf ? <a className="action-btn" href={resolveApiPath(artifacts.pdf)} download={`${projectIdRef.current}.pdf`}>{t("downloadPdf")}</a> : null}
+        {artifacts?.archive ? <a className="action-btn" href={resolveApiPath(artifacts.archive)} download={`${projectIdRef.current}.hkai`}>{t("downloadArchive")}</a> : null}
         <button className="action-btn layout-reset" onClick={resetLayout}>{t("resetLayout")}</button>
         {compactLayout ? <button ref={inspectorToggleRef} className="inspector-toggle" aria-expanded={inspectorOpen} aria-controls="inspector-drawer" onClick={() => setInspectorOpen((open) => !open)}>{t(inspectorOpen ? "hideInspector" : "showInspector")}</button> : null}
         <div className="status-summary" tabIndex={0} title={`${translateStatus(language, gpuStatus)}\n${translateStatus(language, statusText)}\n${t(isDirty ? "unsaved" : "saved")}`}>
           <span>{translateStatus(language, gpuStatus)}</span>
           <span aria-live="polite">{translateStatus(language, statusText)}</span>
-          <span>{t(isDirty ? "unsaved" : "saved")}</span>
+          <span>{t(isSaving ? "saving" : isDirty ? "unsaved" : "saved")}</span>
+          {captureId ? <span>{t("temporaryCapture")}</span> : null}
         </div>
         <div className="language-switch" role="group" aria-label={t("language")}>
           <button className={language === "ja" ? "active" : ""} onClick={() => setLanguage("ja")}>日本語</button>
           <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>English</button>
         </div>
       </header>
+      {saveError || operationalError ? <div className="operation-error" role="alert"><span>{saveError || operationalError}</span><button onClick={() => { setSaveError(""); if (operationalError) setStatusText("Ready"); }}>{t("dismiss")}</button></div> : null}
 
       <main className={compactLayout ? "layout-grid compact-layout" : "layout-grid"} style={{ "--camera-pane-width": `${renderedPanelWidths.camera}px`, "--pdf-pane-width": `${renderedPanelWidths.pdf}px` } as React.CSSProperties}>
         <section className="camera-pane">
@@ -698,6 +875,7 @@ export function App() {
             onReturnToLive={onReturnToLive}
             language={language}
           >
+            {captureId ? <div className="hint warn" role="status">{t("temporaryCapture")}</div> : null}
             <SegmentationControls
               language={language} prompts={prompts.length} isPredicting={isPredicting} hasSegCandidates={hasSegCandidates} hasLatestPrediction={hasLatestPrediction}
               candidateScores={candidateScores} selectedCandidateIndex={selectedCandidateIndex} selectedMaskDataUrl={selectedMaskDataUrl}
@@ -713,12 +891,14 @@ export function App() {
           <PdfOverlayPanel
             pdfSource={pdfSource}
             selectedPage={selectedPage}
-            setSelectedPage={setSelectedPage}
+            setSelectedPage={(page) => { if (page !== selectedPage) { setSelectedPage(page); markDirty(); } }}
             samples={samples}
             selectedSampleId={selectedSampleId}
             setSelectedSampleId={setSelectedSampleId}
             overlayScale={overlayScale}
             onUpdateSample={updateSample}
+            onSampleEditStart={startSampleGesture}
+            onSampleEditEnd={endSampleGesture}
             language={language}
           />
         </section>
@@ -729,7 +909,9 @@ export function App() {
           samples={samples} selectedSampleId={selectedSampleId} overlayScale={overlayScale} styleColors={STYLE_COLORS} defaultStyle={DEFAULT_SAMPLE_STYLE}
           onSelectSample={setSelectedSampleId}
           onUpdateSample={updateSample} onUpdateSampleStyle={updateSampleStyle} onApplyStyleToAll={applyStyleToAll} onDeleteSample={deleteSample}
-          onRedoSelectedSample={redoSelectedSample} onSetOverlayScale={(scale) => { setOverlayScale(scale); setIsDirty(true); }}
+          onRedoSelectedSample={redoSelectedSample} onSetOverlayScale={(scale) => editProject(samplesRef.current, scale)}
+          canUndo={historyVersion >= 0 && pastRef.current.length > 0} canRedo={historyVersion >= 0 && futureRef.current.length > 0}
+          onUndo={() => restoreHistory("undo")} onRedo={() => restoreHistory("redo")}
         />
         </div>
       </main>

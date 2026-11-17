@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import { Group, Layer, Line, Stage } from "react-konva";
 
@@ -16,6 +16,8 @@ type Props = {
   setSelectedSampleId: (id: string | null) => void;
   overlayScale: number;
   onUpdateSample: (sampleId: string, patch: Partial<SampleData["transform"]>) => void;
+  onSampleEditStart?: (sampleId: string) => void;
+  onSampleEditEnd?: (sampleId: string) => void;
   language: Language;
 };
 
@@ -40,10 +42,10 @@ export const sampleColor = (index: number) => COLORS[index % COLORS.length];
 
 function dashFor(lineType: SampleData["style"]["lineType"]): number[] {
   if (lineType === "dashed") {
-    return [10, 6];
+    return [8, 5];
   }
   if (lineType === "dash_dot") {
-    return [12, 5, 2, 5];
+    return [10, 4, 2, 4];
   }
   return [];
 }
@@ -100,18 +102,78 @@ export function PdfOverlayPanel({
   setSelectedSampleId,
   overlayScale,
   onUpdateSample,
+  onSampleEditStart,
+  onSampleEditEnd,
   language,
 }: Props) {
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const documentSequence = useRef(0);
+  const documentRequest = useMemo(() => ({ key: ++documentSequence.current }), [pdfSource]);
+  const pageRequest = useMemo(() => ({}), [documentRequest, selectedPage]);
+  const activeDocument = useRef(documentRequest);
+  const activePage = useRef(pageRequest);
+  const currentPage = useRef(selectedPage);
+  const fitNewDocument = useRef(true);
+  const sampleGesture = useRef<string | null>(null);
+  const editEndRef = useRef(onSampleEditEnd);
   const [numPages, setNumPages] = useState(0);
   const [pageSize, setPageSize] = useState({ width: 1000, height: 1300 });
+  const [nativePageWidth, setNativePageWidth] = useState(1000);
   const [pdfZoom, setPdfZoom] = useState(1);
   const [viewportPan, setViewportPan] = useState({ x: 0, y: 0 });
   const [middleDragging, setMiddleDragging] = useState(false);
   const [lastMouse, setLastMouse] = useState({ x: 0, y: 0 });
   const [dragMode, setDragMode] = useState<DragMode>({ kind: "none" });
   const [pendingRecenterSampleId, setPendingRecenterSampleId] = useState<string | null>(null);
-  const [renderedPage, setRenderedPage] = useState(0);
+  const [renderedPage, setRenderedPage] = useState<object | null>(null);
+
+  function endSampleGesture() {
+    const sampleId = sampleGesture.current;
+    if (sampleId === null) return;
+    sampleGesture.current = null;
+    editEndRef.current?.(sampleId);
+  }
+
+  useLayoutEffect(() => {
+    editEndRef.current = onSampleEditEnd;
+  }, [onSampleEditEnd]);
+
+  useLayoutEffect(() => {
+    activeDocument.current = documentRequest;
+    fitNewDocument.current = true;
+    setNumPages(0);
+    setPendingRecenterSampleId(null);
+    setRenderedPage(null);
+    setPageSize({ width: 1000, height: 1300 });
+    setNativePageWidth(1000);
+    setPdfZoom(1);
+    setViewportPan({ x: 0, y: 0 });
+    setMiddleDragging(false);
+    setDragMode({ kind: "none" });
+    endSampleGesture();
+  }, [documentRequest]);
+
+  useLayoutEffect(() => {
+    activePage.current = pageRequest;
+    currentPage.current = selectedPage;
+    endSampleGesture();
+    setDragMode({ kind: "none" });
+  }, [pageRequest]);
+
+  useEffect(() => {
+    function finishGesture() {
+      endSampleGesture();
+      setMiddleDragging(false);
+      setDragMode({ kind: "none" });
+    }
+    window.addEventListener("mouseup", finishGesture);
+    window.addEventListener("blur", finishGesture);
+    return () => {
+      window.removeEventListener("mouseup", finishGesture);
+      window.removeEventListener("blur", finishGesture);
+      endSampleGesture();
+    };
+  }, []);
 
   const visibleSamples = useMemo(
     () => samples.filter((s) => s.transform.visible && (s.pageNumber ?? 1) === selectedPage),
@@ -139,7 +201,7 @@ export function PdfOverlayPanel({
   }
 
   useEffect(() => {
-    if (!pendingRecenterSampleId || renderedPage !== selectedPage) {
+    if (!pendingRecenterSampleId || renderedPage !== pageRequest) {
       return;
     }
     const pendingSample = samples.find((sample) => sample.sampleId === pendingRecenterSampleId);
@@ -149,16 +211,12 @@ export function PdfOverlayPanel({
     }
     centerViewportOnSample(pendingSample);
     setPendingRecenterSampleId(null);
-  }, [pendingRecenterSampleId, renderedPage, selectedPage, samples, overlayScale, pdfZoom]);
-
-  useEffect(() => {
-    setNumPages(0);
-    setPendingRecenterSampleId(null);
-  }, [pdfSource]);
+  }, [pendingRecenterSampleId, renderedPage, pageRequest, selectedPage, samples, overlayScale, pdfZoom]);
 
   function onDocLoadSuccess(info: { numPages: number }) {
+    if (activeDocument.current !== documentRequest) return;
     setNumPages(info.numPages);
-    if (selectedPage > info.numPages) {
+    if (currentPage.current > info.numPages) {
       setSelectedPage(info.numPages);
     }
   }
@@ -176,6 +234,7 @@ export function PdfOverlayPanel({
 
   function onWheel(ev: React.WheelEvent<HTMLDivElement>) {
     ev.preventDefault();
+    fitNewDocument.current = false;
     const factor = ev.deltaY < 0 ? 1.1 : 0.9;
     const next = Math.min(8, Math.max(0.2, pdfZoom * factor));
     const rect = viewportRef.current?.getBoundingClientRect();
@@ -199,6 +258,7 @@ export function PdfOverlayPanel({
     if (ev.button !== 1) {
       return;
     }
+    fitNewDocument.current = false;
     setMiddleDragging(true);
     setLastMouse({ x: ev.clientX, y: ev.clientY });
   }
@@ -216,14 +276,16 @@ export function PdfOverlayPanel({
   function onViewportMouseUp() {
     setMiddleDragging(false);
     setDragMode({ kind: "none" });
+    endSampleGesture();
   }
 
   function recenterSelectedContour() {
     if (!selectedSample || !selectedBounds) {
       return;
     }
+    fitNewDocument.current = false;
     const samplePage = selectedSample.pageNumber ?? 1;
-    if (samplePage !== selectedPage || renderedPage !== selectedPage) {
+    if (samplePage !== selectedPage || renderedPage !== pageRequest) {
       setPendingRecenterSampleId(selectedSample.sampleId);
       setSelectedPage(samplePage);
       return;
@@ -231,12 +293,12 @@ export function PdfOverlayPanel({
     centerViewportOnSample(selectedSample);
   }
 
-  function fitView(mode: "page" | "width") {
+  function fitView(mode: "page" | "width", size = pageSize) {
     const rect = viewportRef.current?.getBoundingClientRect();
     if (!rect || !rect.width || !rect.height) return;
-    const zoom = Math.min(8, Math.max(0.2, mode === "width" ? rect.width / pageSize.width : Math.min(rect.width / pageSize.width, rect.height / pageSize.height)));
+    const zoom = Math.min(8, Math.max(0.2, mode === "width" ? rect.width / size.width : Math.min(rect.width / size.width, rect.height / size.height)));
     setPdfZoom(zoom);
-    setViewportPan({ x: (rect.width - pageSize.width * zoom) / 2, y: mode === "page" ? (rect.height - pageSize.height * zoom) / 2 : 0 });
+    setViewportPan({ x: (rect.width - size.width * zoom) / 2, y: mode === "page" ? (rect.height - size.height * zoom) / 2 : 0 });
   }
 
   function onSampleMouseDown(sample: SampleData, evt: MouseEvent) {
@@ -244,6 +306,12 @@ export function PdfOverlayPanel({
     const pointer = toContentPoint(evt.clientX, evt.clientY);
     if (!pointer) {
       return;
+    }
+
+    if (evt.button === 0 || evt.button === 2) {
+      endSampleGesture();
+      sampleGesture.current = sample.sampleId;
+      onSampleEditStart?.(sample.sampleId);
     }
 
     if (evt.button === 0) {
@@ -320,9 +388,9 @@ export function PdfOverlayPanel({
         <span>{translate(language, "page")} {selectedPage}{numPages ? ` / ${numPages}` : ""}</span>
         <button onClick={() => setSelectedPage(Math.min(numPages, selectedPage + 1))} disabled={!numPages || selectedPage >= numPages}>{translate(language, "next")}</button>
         <span>{translate(language, "zoom")} {Math.round(pdfZoom * 100)}%</span>
-        <button type="button" onClick={() => fitView("page")} disabled={!pdfSource}>{translate(language, "fitPage")}</button>
-        <button type="button" onClick={() => fitView("width")} disabled={!pdfSource}>{translate(language, "fitWidth")}</button>
-        <button type="button" onClick={() => { setPdfZoom(1); setViewportPan({ x: 0, y: 0 }); }} disabled={!pdfSource}>{translate(language, "resetView")}</button>
+        <button type="button" onClick={() => { fitNewDocument.current = false; fitView("page"); }} disabled={!pdfSource || renderedPage !== pageRequest}>{translate(language, "fitPage")}</button>
+        <button type="button" onClick={() => { fitNewDocument.current = false; fitView("width"); }} disabled={!pdfSource || renderedPage !== pageRequest}>{translate(language, "fitWidth")}</button>
+        <button type="button" onClick={() => { fitNewDocument.current = false; setPdfZoom(1); setViewportPan({ x: 0, y: 0 }); }} disabled={!pdfSource}>{translate(language, "resetView")}</button>
         <button type="button" onClick={recenterSelectedContour} disabled={!selectedBounds} title={translate(language, "recenterContour")}>{translate(language, "recenterContour")}</button>
       </div>
       <div
@@ -333,30 +401,41 @@ export function PdfOverlayPanel({
         onMouseMove={onViewportMouseMove}
         onMouseUp={onViewportMouseUp}
         onMouseLeave={onViewportMouseUp}
+        onPointerCancel={onViewportMouseUp}
       >
         <div
           className="pdf-layer-stack"
           style={{ transform: `translate(${viewportPan.x}px, ${viewportPan.y}px) scale(${pdfZoom})`, transformOrigin: "0 0" }}
           onContextMenu={(e) => e.preventDefault()}
         >
-          {pdfSource ? <Document file={pdfSource} onLoadSuccess={onDocLoadSuccess} loading={translate(language, "pdfLoading")} error={translate(language, "pdfError")}>
+          {pdfSource ? <Document key={documentRequest.key} file={pdfSource} onLoadSuccess={onDocLoadSuccess} loading={translate(language, "pdfLoading")} error={translate(language, "pdfError")}>
             <Page
+              key={selectedPage}
               pageNumber={selectedPage}
               width={1000}
               renderTextLayer={false}
               renderAnnotationLayer={false}
               onRenderSuccess={(page) => {
-                setPageSize({ width: page.width, height: page.height });
-                setRenderedPage(selectedPage);
+                if (activePage.current !== pageRequest) return;
+                const viewport = page.getViewport({ scale: 1 });
+                const size = { width: 1000, height: 1000 * viewport.height / viewport.width };
+                setPageSize(size);
+                setNativePageWidth(viewport.width);
+                setRenderedPage(pageRequest);
+                if (fitNewDocument.current) {
+                  fitNewDocument.current = false;
+                  fitView("page", size);
+                }
               }}
             />
           </Document> : <div className="pdf-empty">{translate(language, "noPdf")}</div>}
           <div className="overlay-stage-wrap">
-            <Stage width={stageW} height={stageH} onMouseMove={onStageMouseMove} onMouseUp={() => setDragMode({ kind: "none" })}>
+            <Stage width={stageW} height={stageH} onMouseMove={onStageMouseMove} onMouseUp={onViewportMouseUp}>
               <Layer>
                 {visibleSamples.map((sample) => {
                   const isSelected = sample.sampleId === selectedSampleId;
-                  const baseStroke = Math.max(0.7, sample.style.widthMm * 3.78);
+                  const displayUnitsPerPoint = 1000 / nativePageWidth;
+                  const baseStroke = sample.style.widthMm * 72 / 25.4 * displayUnitsPerPoint;
                   const centroid = centroidBySample.get(sample.sampleId) ?? { x: 0, y: 0 };
                   const allContours = [...sample.outerContours, ...sample.holeContours];
 
@@ -380,7 +459,7 @@ export function PdfOverlayPanel({
                             points={shifted}
                             closed
                             stroke={sample.style.color}
-                            dash={dashFor(sample.style.lineType)}
+                            dash={dashFor(sample.style.lineType).map((length) => length * displayUnitsPerPoint / Math.max(overlayScale, 0.01))}
                             strokeWidth={(isSelected ? baseStroke + 1 : baseStroke) / Math.max(overlayScale, 0.01)}
                             hitStrokeWidth={10 / Math.max(overlayScale, 0.01)}
                             listening

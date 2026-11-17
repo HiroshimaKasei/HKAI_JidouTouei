@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>AI自動投影 かんたん操作ガイド</title>
+  <style>
+    @page { size: A4 portrait; margin: 12mm 13mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #21312d; font-family: "Meiryo", "Yu Gothic", sans-serif; font-size: 10.5pt; line-height: 1.36; }
+    h1, h2, p, figure { margin: 0; }
+    h1 { font-size: 22pt; line-height: 1.15; color: #214b3a; letter-spacing: .01em; }
+    h1 span { font-size: 15pt; margin-left: .5em; color: #21312d; }
+    h2 { font-size: 12pt; line-height: 1.2; color: #214b3a; border-left: 3mm solid #2c5f4a; padding-left: 2mm; margin-bottom: 2mm; }
+    .intro { margin: 2mm 0 3mm; }
+    .diagram { display: block; width: 100%; height: auto; }
+    figcaption { font-size: 9pt; color: #52635b; margin-top: 1mm; }
+    .legend { display: grid; grid-template-columns: 1fr 1.28fr 1fr; gap: 3mm; margin: 2mm 0 3mm; font-size: 9.5pt; line-height: 1.3; }
+    .legend b { color: #214b3a; }
+    .steps { display: grid; gap: 1.5mm; margin-bottom: 3mm; }
+    .step { display: grid; grid-template-columns: 7mm 1fr; gap: 2mm; align-items: start; }
+    .number { background: #2c5f4a; color: white; border-radius: 50%; width: 6.5mm; height: 6.5mm; text-align: center; line-height: 6.5mm; font-weight: bold; font-size: 10pt; }
+    .step strong { color: #214b3a; }
+    .mouse { display: grid; grid-template-columns: 1fr 1.25fr; gap: 4mm; margin-bottom: 3mm; }
+    table { border-collapse: collapse; width: 100%; font-size: 9.5pt; line-height: 1.25; }
+    caption { text-align: left; font-weight: bold; background: #eaf2ed; padding: 1mm 2mm; }
+    td { padding: .8mm 2mm; border-bottom: 1px solid #d6dfda; vertical-align: top; }
+    td:first-child { white-space: nowrap; font-weight: bold; }
+    .note { border: 1px solid #b5c6bc; border-left: 3mm solid #2c5f4a; background: #f3f6f5; padding: 2mm 3mm; font-size: 9.5pt; }
+    .note strong { color: #214b3a; }
+    @media screen {
+      body { width: 184mm; margin: 12mm auto; }
+    }
+  </style>
+</head>
+<body>
+  <h1>AI自動投影 <span>かんたん操作ガイド</span></h1>
+  <p class="intro">部品の画像からAIで輪郭を抽出し、PDF図面に重ねます。<br>輪郭の位置や角度を調整し、作業内容を保存できます。</p>
+
+  <h2>画面の見方</h2>
+  <figure>
+    <img class="diagram" src="assets/画面構成.svg" alt="左からカメラ、PDF・輪郭オーバーレイ、編集パネルを配置した画面構成">
+    <figcaption>画面構成イメージ（部品と図面は説明用の例です）</figcaption>
+  </figure>
+  <div class="legend">
+    <p><b>① カメラ</b><br>画像を確認し、輪郭を抽出します。</p>
+    <p><b>② PDF・輪郭表示</b><br>図面上の輪郭の位置や角度を調整します。</p>
+    <p><b>③ 編集パネル</b><br>サンプル選択と線の設定をします。</p>
+  </div>
+
+  <h2>基本操作</h2>
+  <div class="steps">
+    <div class="step"><span class="number">1</span><p><strong>PDFを開く</strong>　「PDFを開く」を押し、図面を選びます。</p></div>
+    <div class="step"><span class="number">2</span><p><strong>撮影する</strong>　部品を映して「撮影」を押します。画像は「画像を開く」で選び、「撮影」を押します。</p></div>
+    <div class="step"><span class="number">3</span><p><strong>輪郭を抽出する</strong>　撮影画像で、含めたい場所を左クリック、除きたい場所を右クリックします。処理後、候補を確認して「マスクを確定」を押します。</p></div>
+    <div class="step"><span class="number">4</span><p><strong>図面に合わせる</strong>　輪郭線を左ドラッグで移動、右ドラッグで回転します。線は編集パネルで設定します。</p></div>
+    <div class="step"><span class="number">5</span><p><strong>保存する</strong>　「保存」を押し、結果を確認します。再開時は「読み込み」で保存済みプロジェクトを選び、もう一度「読み込み」を押します。</p></div>
+  </div>
+
+  <h2>マウス操作</h2>
+  <div class="mouse">
+    <table>
+      <caption>カメラ画面（撮影画像）</caption>
+      <tbody>
+        <tr><td>左クリック</td><td>輪郭に含める場所を指定</td></tr>
+        <tr><td>右クリック</td><td>輪郭から除く場所を指定</td></tr>
+      </tbody>
+    </table>
+    <table>
+      <caption>PDF画面</caption>
+      <tbody>
+        <tr><td>輪郭を左ドラッグ</td><td>輪郭を移動</td></tr>
+        <tr><td>輪郭を右ドラッグ</td><td>輪郭を回転</td></tr>
+        <tr><td>ホイール</td><td>表示を拡大・縮小</td></tr>
+        <tr><td>中ボタンドラッグ</td><td>表示位置を移動</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note"><strong>確認：</strong>未確定の撮影画像や輪郭は保存されません。輪郭を確定してから保存してください。出力PDFが必要な場合は、保存後に表示される「PDFをダウンロード」を押します。倍率は実寸の自動校正ではありません。</p>
+</body>
+</html>

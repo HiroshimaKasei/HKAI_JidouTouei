@@ -12,9 +12,12 @@ type Props = {
 export function ProjectPicker({ language, onClose, onLoad }: Props) {
   const [projects, setProjects] = useState<string[] | null>(null);
   const [selected, setSelected] = useState("");
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [loadingProject, setLoadingProject] = useState(false);
   const dialogRef = useRef<HTMLDivElement>(null);
+  const filteredProjects = (projects ?? []).filter((id) => id.toLowerCase().includes(search.trim().toLowerCase())).sort();
+  const selectedIsVisible = filteredProjects.includes(selected);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -32,7 +35,7 @@ export function ProjectPicker({ language, onClose, onLoad }: Props) {
   }, []);
 
   async function loadSelected() {
-    if (!selected || loadingProject) return;
+    if (!selected || !selectedIsVisible || loadingProject) return;
     setLoadingProject(true);
     setError("");
     try {
@@ -73,18 +76,22 @@ export function ProjectPicker({ language, onClose, onLoad }: Props) {
         {projects?.length === 0 ? <p>{translate(language, "noProjects")}</p> : null}
         {error ? <p className="error-text" role="alert">{translate(language, "loadFailed")}: {error}</p> : null}
         {projects && projects.length > 0 ? (
-          <div className="project-list" role="radiogroup" aria-label={translate(language, "chooseProject")}>
-            {projects.map((id) => (
-              <label className={selected === id ? "project-option selected" : "project-option"} key={id}>
-                <input type="radio" name="project" value={id} checked={selected === id} onChange={() => setSelected(id)} />
-                <span>{id}</span>
-              </label>
-            ))}
-          </div>
+          <>
+            <label>{translate(language, "searchProjects")}<input type="search" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+            {filteredProjects.length === 0 ? <p role="status">{translate(language, "noMatchingProjects")}</p> : null}
+            <div className="project-list" role="radiogroup" aria-label={translate(language, "chooseProject")}>
+              {filteredProjects.map((id) => (
+                <label className={selected === id ? "project-option selected" : "project-option"} key={id}>
+                  <input type="radio" name="project" value={id} checked={selected === id} onChange={() => setSelected(id)} />
+                  <span>{id}</span>
+                </label>
+              ))}
+            </div>
+          </>
         ) : null}
         <div className="dialog-actions">
           <button onClick={onClose} disabled={loadingProject}>{translate(language, "cancel")}</button>
-          <button className="primary-action" onClick={() => void loadSelected()} disabled={!selected || loadingProject}>
+          <button className="primary-action" onClick={() => void loadSelected()} disabled={!selected || !selectedIsVisible || loadingProject}>
             {loadingProject ? translate(language, "loading") : translate(language, "load")}
           </button>
         </div>

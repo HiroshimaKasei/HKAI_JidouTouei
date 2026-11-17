@@ -9,6 +9,7 @@ venv/
 node_modules/
 frontend/node_modules/
 frontend/dist/
+frontend/*.tsbuildinfo
 
 # Runtime data
 /backend/.mypy_cache/
@@ -16,6 +17,8 @@ data/
 models/
 *.log
 *.tmp
+logs/
+/git
 
 # OS/editor
 .DS_Store

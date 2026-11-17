@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
@@ -64,6 +64,7 @@ const apiMock = vi.hoisted(() => {
     fetchFileAsFile: vi.fn(),
     fileToHex: vi.fn(),
     saveProject: vi.fn().mockResolvedValue(undefined),
+    importProject: vi.fn().mockResolvedValue({ project_id: "imported-project" }),
     listProjects: vi.fn().mockResolvedValue(["loaded-project"]),
     loadProject: vi.fn().mockResolvedValue({
       project_id: "loaded-project",
@@ -112,6 +113,7 @@ describe("App reliability regression", () => {
     window.localStorage.clear();
     window.localStorage.setItem("hkai-language", "en");
     vi.clearAllMocks();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     apiMock.getHealth.mockResolvedValue({ gpu: { device_name: "GPU", capability: "8.9", model_loaded: true } });
     apiMock.getCameraStatus.mockResolvedValue({ camera_available: false, camera_name: "TEST", mode: "test" });
     const captureCalls = [
@@ -316,6 +318,164 @@ describe("App reliability regression", () => {
     render(<App />);
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText(/Project saved, but PDF export failed: export failed/)).toBeInTheDocument();
+  });
+
+  it("reports a saved project without a source PDF as not PDF-exported", async () => {
+    apiMock.saveProject.mockResolvedValueOnce({
+      artifacts: {
+        project: { status: "saved", error: "" },
+        result_pdf: { status: "missing", error: "" },
+        archive: { status: "ready", error: "" },
+      },
+    });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("no result PDF was created");
+    expect(screen.queryByRole("link", { name: "Download PDF" })).not.toBeInTheDocument();
+  });
+
+  it("keeps edits and image buffers made during a pending save", async () => {
+    let finish!: (value: { result_pdf_url: string; archive_url: string }) => void;
+    apiMock.saveProject.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<App />);
+    await createSample();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Move selected sample" }));
+    finish({ result_pdf_url: "/result.pdf", archive_url: "/project.hkai" });
+    await waitFor(() => expect(screen.getByText("Unsaved changes")).toBeInTheDocument());
+    expect(screen.queryByRole("link", { name: "Download PDF" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalledTimes(2));
+    const first = apiMock.saveProject.mock.calls[0][1] as { samples: SampleData[] };
+    const second = apiMock.saveProject.mock.calls[1][1] as { samples: SampleData[] };
+    expect(first.samples[0].transform.tx).toBe(0);
+    expect(second.samples[0].transform.tx).toBe(123);
+    expect(second.samples[0].capturePngHex).toBe("89504e47");
+    expect(second.samples[0].maskPngHex).toBe("aa");
+  });
+
+  it("does not discard a replacement mask accepted while saving", async () => {
+    let finish!: (value: object) => void;
+    apiMock.saveProject.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<App />);
+    await createSample();
+    apiMock.acceptMask.mockResolvedValueOnce({
+      mask_png_hex: "dd", contour_bw_png_hex: "ee", contour_alpha_png_hex: "ff",
+      outer_contours: [[[0, 0], [3, 0], [3, 3]]], hole_contours: [],
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(screen.getByRole("button", { name: "Redo Segmentation" }));
+    await waitFor(() => expect(apiMock.registerCaptureFile).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
+    await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Accept Mask" })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
+    await waitFor(() => expect(window.confirm).toHaveBeenCalledTimes(2));
+    await act(async () => finish({}));
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalledTimes(2));
+    const saved = apiMock.saveProject.mock.calls[1][1] as { samples: SampleData[] };
+    expect(saved.samples[0].maskPngHex).toBe("dd");
+    expect(saved.samples[0].contourBwPngHex).toBe("ee");
+  });
+
+  it("keeps a temporary capture after saving and warns before discarding it", async () => {
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => expect(screen.getAllByText(/temporary.*not.*saved/i).length).toBeGreaterThan(0));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalled());
+    expect(screen.getAllByText(/temporary.*not.*saved/i).length).toBeGreaterThan(0);
+    vi.mocked(window.confirm).mockReturnValueOnce(false);
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    expect(apiMock.capture).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves project data for retry when saving fails", async () => {
+    apiMock.saveProject.mockRejectedValueOnce(new Error("disk full"));
+    render(<App />);
+    await createSample();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("disk full");
+    expect(screen.getByText("Unsaved changes")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(apiMock.saveProject).toHaveBeenCalledTimes(2));
+    const retried = apiMock.saveProject.mock.calls[1][1] as { samples: SampleData[] };
+    expect(retried.samples[0].capturePngHex).toBe("89504e47");
+    expect(retried.samples[0].maskPngHex).toBe("aa");
+  });
+
+  it("ignores an accepted mask response from a discarded capture", async () => {
+    let finish!: (value: { mask_png_hex: string; contour_bw_png_hex: string; contour_alpha_png_hex: string; outer_contours: number[][][]; hole_contours: number[][][] }) => void;
+    apiMock.acceptMask.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => expect(apiMock.prepareEmbedding).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Accept Mask" })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await act(async () => finish({ mask_png_hex: "aa", contour_bw_png_hex: "bb", contour_alpha_png_hex: "cc", outer_contours: [[[0, 0], [1, 0], [1, 1]]], hole_contours: [] }));
+    expect(screen.getByText("No samples yet")).toBeInTheDocument();
+  });
+
+  it("undoes deletion, redoes it, and does not reuse an id in the current project", async () => {
+    render(<App />);
+    await createSample();
+    fireEvent.click(screen.getByRole("button", { name: "Delete Sample 001" }));
+    expect(screen.queryByText("Sample 001 (P1)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Undo edit" }));
+    expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Redo edit" }));
+    expect(screen.queryByText("Sample 001 (P1)")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => expect(apiMock.prepareEmbedding).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
+    await waitFor(() => expect(apiMock.predictMask).toHaveBeenCalledTimes(2));
+    fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
+    expect(await screen.findByText("Sample 002 (P1)")).toBeInTheDocument();
+  });
+
+  it("offers only returned artifacts and surfaces import failures", async () => {
+    apiMock.saveProject.mockResolvedValueOnce({ result_pdf_url: "/result.pdf", archive_url: "/project.hkai" });
+    apiMock.importProject.mockRejectedValueOnce(new Error("invalid archive"));
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByRole("link", { name: "Download PDF" })).toHaveAttribute("href", "/result.pdf");
+    expect(screen.getByRole("link", { name: "Download project" })).toHaveAttribute("href", "/project.hkai");
+    const input = document.querySelector('input[type="file"][accept=".hkai"]') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["bad"], "bad.hkai")] } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("invalid archive");
+  });
+
+  it("opens the project picker after a successful archive import", async () => {
+    apiMock.importProject.mockResolvedValueOnce({ project_id: "imported-project" });
+    render(<App />);
+    const input = document.querySelector('input[type="file"][accept=".hkai"]') as HTMLInputElement;
+    const archive = new File(["archive"], "inspection.hkai");
+    fireEvent.change(input, { target: { files: [archive] } });
+    await waitFor(() => expect(apiMock.importProject).toHaveBeenCalledWith(archive));
+    expect(await screen.findByRole("dialog", { name: "Select a project" })).toBeInTheDocument();
+    expect(screen.getByText("Import complete: imported-project")).toBeInTheDocument();
+  });
+
+  it("does not reuse sample ids reserved by a loaded project", async () => {
+    const loaded = await apiMock.loadProject();
+    apiMock.loadProject.mockClear();
+    apiMock.loadProject.mockResolvedValueOnce({ ...loaded, reserved_sample_ids: ["001", "002"] });
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    fireEvent.click(await screen.findByLabelText("loaded-project"));
+    fireEvent.click(screen.getAllByRole("button", { name: "Load" })[1]);
+    await waitFor(() => expect(screen.getByText("Sample 001 (P1)")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Capture" }));
+    await waitFor(() => expect(apiMock.prepareEmbedding).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Add Positive" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Accept Mask" })).not.toBeDisabled());
+    fireEvent.click(screen.getByRole("button", { name: "Accept Mask" }));
+    expect(await screen.findByText("Sample 003 (P1)")).toBeInTheDocument();
   });
 });
 

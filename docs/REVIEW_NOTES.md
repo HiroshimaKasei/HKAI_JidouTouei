@@ -11,17 +11,21 @@ Audit basis: uploaded `HKAI_JidouTouei-main (1).zip`, inspected in the current c
 
 - The previous implementation changed saved translation. Recenter now pans the viewport to the transformed contour center, including after a page switch, without changing sample geometry or zoom. Regression tests cover both cases.
 
+## Phase 2 follow-up
+
+- Hidden contours are excluded from result PDFs while their editable samples and image-derived DXFs remain. Staged saves, revision-aware dirty state, undo/redo, archive import and artifact downloads are implemented; see `PHASE2_IMPLEMENTATION_REPORT.md` for validation and limitations.
+- PDF rotation and CropBox placement have synthetic numerical tests. Physical calibration is not implemented; non-default PDF UserUnit can still affect exported line width. Validate actual factory drawings and hardware.
+
 ## P1: PDF-native coordinates and export verification
 
 - `frontend/src/components/PdfOverlayPanel.tsx` still renders `<Page width={1000}>`.
 - `backend/app/services/pdf_export_service.py` still uses `DISPLAY_PAGE_WIDTH=1000` and page-width scale instead of a full PDF-native stored transform.
-- Add tests for CropBox, rotated and non-default-origin pages, mixed sizes, screen/PDF roundtrip. Don't claim dimensional accuracy from current output without calibration and export validation.
+- The display-coordinate convention remains; don't claim dimensional accuracy without calibration and factory export validation.
 
-## P1: Expose .hkai and PDF artifacts to operators
+## Resolved: expose .hkai and PDF artifacts to operators
 
 - Backend: `/api/project/import`, `/result.pdf`, `/{id}.hkai` exist. `.hkai` archive creation/import and SHA checksums implemented.
-- Local project IDs are now selected in a picker; `.hkai` file upload is still not exposed in the UI.
-- The save UI now reports a returned `export_error`, but does not offer Download PDF/Archive or Import Archive actions. Local save does not itself guarantee a PDF exists.
+- Local project IDs can be searched in the picker; `.hkai` import and downloads are exposed. A local save does not itself guarantee a PDF exists.
 
 ## P1: Google Drive and security features missing
 

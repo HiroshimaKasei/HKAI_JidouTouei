@@ -43,16 +43,16 @@ More detailed flow diagrams, endpoints, coordinate spaces and file layouts are i
 6. **Recenter:** Recenter is **viewport-only navigation**. It must not change sample `tx/ty`, rotation, scale or PDF zoom. Preserve the cross-page regression tests.
 7. **Drawing transforms:** Raw SAM contour points and prompts are image pixels; `SampleTransform.tx/ty/rotationDeg`, `overlayScale` and PDF viewport pan/zoom are different concerns. Do not mix viewing transformations with persisted geometry. The current renderer uses a **1000 px display-page width**; PDF-native placement migration is NOT completed.
 8. **Style:** Per-sample `SampleStyle` stores `color`, `lineType` (`solid`, `dashed`, `dash_dot`), and `widthMm`. Preserve legacy `transform.color` migration and use consistent previews and PDF exports.
-9. **Saving:** Keep the original `source.pdf` and project data; local `data/projects/<id>/` is authoritative. Backend generates `result.pdf` and `<id>.hkai` with checksums. Don't claim cloud upload or finished PDF success based solely on local JSON save. Never destructively migrate existing projects.
+9. **Saving:** Keep the original `source.pdf` and project data; local `data/projects/<id>/` is authoritative. Save snapshots are revision-checked; unfinished captures are temporary, not saved project data. Backend stages project changes and generates `result.pdf` and `<id>.hkai` with checksums. Hidden samples are excluded from PDF output, not editable data or per-sample DXF. Don't claim cloud upload or finished PDF success based solely on local JSON save. Never destructively migrate existing projects.
 10. **Security:** An operator lock and a trusted IP allowlist are NOT user authentication. Do not expose sensitive settings or Drive credentials to browsers. Do not open port 8000 to the internet.
 11. **User experience:** Japanese is default; all new user-facing controls need `ja` and `en` translations. Name remains **AI自動投影**. Keep 3 panels: camera left, PDF center, inspector right; no zoom/reconnect on resizing.
 12. **No unrelated rewrites:** Preserve the working DFK/IC4, SAM, contour extraction, PDF, `.hkai`, LAN and launcher workflows. Use scoped, testable changes.
 
 ## 4. Current feature truth (uploaded ZIP)
 
-**Implemented in source:** resizable workspace with compact inspector drawer; localStorage widths; ja/en switch; live/test image switch; no camera zoom; 90° camera rotation; prompt+SAM acceptance; sample list; line styles; Konva PDF overlay with view-only recenter; manual sample drag/rotate; local project picker; `/api/project/save`, `/load`, `/import`; local `result.pdf` and `.hkai`; FastAPI static LAN server; operator lease.
+**Implemented in source:** resizable workspace with compact inspector drawer; localStorage widths; ja/en switch; live/test image switch; no camera zoom; 90° camera rotation; prompt+SAM acceptance; reversible sample edits and numeric placement; line styles; Konva PDF overlay with view-only recenter; local project picker, archive import and saved-artifact downloads; local `result.pdf` and `.hkai`; FastAPI static LAN server; operator lease.
 
-**Not implemented:** Google Workspace OAuth, administrator authentication, Shared Drive file browser, durable Drive sync/retry/conflict queue, fully PDF-native coordinate migration. Do not write docs or mock UI suggesting they exist. Frontend does not currently provide a `.hkai` file-picker import action even though backend `POST /api/project/import` exists.
+**Not implemented:** Google Workspace OAuth, administrator authentication, Shared Drive file browser, durable Drive sync/retry/conflict queue, fully PDF-native coordinate migration. Do not write docs or mock UI suggesting they exist.
 
 ## 5. Development and test commands
 

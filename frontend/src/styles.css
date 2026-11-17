@@ -40,13 +40,16 @@ input[type="number"] { width: 84px; }
 input[type="color"] { width: 42px; padding: 3px !important; }
 input[aria-invalid="true"] { border-color: var(--color-danger) !important; }
 .action-btn input[type="file"], .test-upload input[type="file"] { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.action-btn { text-decoration: none; }
+.action-btn:has(input:disabled) { opacity: .6; cursor: not-allowed; }
 
-.app-root { display: grid; grid-template-rows: var(--header-height) minmax(0, 1fr); height: 100%; min-width: 0; overflow: hidden; }
-.topbar { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
+.app-root { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-width: 0; overflow: hidden; }
+.topbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; padding: 8px 12px; border-bottom: 1px solid var(--color-border); background: var(--color-surface); }
 .topbar > button, .topbar > .action-btn { flex: 0 0 auto; white-space: nowrap; }
 .brand { flex: 0 0 auto; margin-right: 8px; font-size: 20px; font-weight: 700; white-space: nowrap; }
 .status-summary { display: flex; flex: 1 1 180px; flex-direction: column; min-width: 0; margin-left: auto; color: var(--color-text-secondary); font-size: 12px; line-height: 1.25; }
 .status-summary span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.operation-error { position: fixed; z-index: 20; right: 12px; bottom: 12px; display: flex; align-items: start; gap: 12px; max-width: min(640px, calc(100vw - 24px)); padding: 12px; border: 2px solid var(--color-danger); border-radius: 6px; background: var(--color-surface); color: var(--color-danger); overflow-wrap: anywhere; box-shadow: 0 4px 16px rgb(33 49 45 / 22%); }
 .language-switch { display: flex; flex: 0 0 auto; overflow: hidden; border: 1px solid var(--color-border); border-radius: 6px; }
 .language-switch button { min-height: 36px; padding: 4px 8px; border: 0; border-radius: 0; }
 .language-switch button.active { color: #fff; background: var(--color-primary); }
